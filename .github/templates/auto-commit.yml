@@ -1,0 +1,17 @@
+name: Auto Commit Message
+
+on:
+  push:
+    branches:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  call-auto-commit:
+    uses: SmartCivita/github-actions-shared/.github/workflows/auto-commit-message.yml@main
+    secrets:
+      PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
