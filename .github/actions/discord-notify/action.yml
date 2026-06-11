@@ -29,6 +29,15 @@ inputs:
   pr-number:
     description: PR number
     default: ""
+  webhook:
+    description: Discord webhook URL
+    required: true
+  status:
+    description: Status (success, skipped, failure)
+    default: "success"
+  run-url:
+    description: Workflow run URL
+    default: ""
 
 runs:
   using: composite
@@ -42,4 +51,6 @@ runs:
         GITHUB_ACTOR: ${{ github.actor }}
         STATUS: ${{ inputs.status }}
         RUN_URL: ${{ inputs.run-url }}
-      run: ${{ github.action_path }}/discord-notify.sh "${{ inputs.title }}" "${{ inputs.color }}" "${{ inputs.description }}" "${{ inputs.url }}" "${{ inputs.event-type }}" "${{ inputs.old-msg }}" "${{ inputs.new-msg }}" "${{ inputs.commit-sha }}" "${{ inputs.pr-number }}"
+      run: |
+        chmod +x ${{ github.action_path }}/discord-notify.sh
+        ${{ github.action_path }}/discord-notify.sh "${{ inputs.title }}" "${{ inputs.color }}" "${{ inputs.description }}" "${{ inputs.url }}" "${{ inputs.event-type }}" "${{ inputs.old-msg }}" "${{ inputs.new-msg }}" "${{ inputs.commit-sha }}" "${{ inputs.pr-number }}"
