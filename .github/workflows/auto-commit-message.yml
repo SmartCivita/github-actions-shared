@@ -5,6 +5,11 @@ on:
     branches:
       - "*"
   workflow_call:
+    inputs:
+      target-branch:
+        type: string
+        default: main
+        description: Target branch to push amended commits
     secrets:
       PERSONAL_ACCESS_TOKEN:
         required: true
@@ -28,17 +33,25 @@ jobs:
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Fix commit message
-        if: ${{ github.event.head_commit && github.event.head_commit.message && !contains(github.event.head_commit.message, ':') && !contains(github.event.head_commit.message, 'Merge') }}
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          TARGET_BRANCH: ${{ inputs.target-branch }}
         id: fix
         run: |
           echo "::add-mask::$OPENCODE_API_KEY"
           
+          CURRENT_MSG=$(git log -1 --pretty=format:"%s")
+          
+          if echo "$CURRENT_MSG" | grep -q ':' || echo "$CURRENT_MSG" | grep -q -i '^Merge'; then
+            echo "status=skipped" >> $GITHUB_OUTPUT
+            echo "Skipping: message already follows conventional commits or is a merge"
+            exit 0
+          fi
+          
           DIFF=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 2000)
           
-          [ -z "$DIFF" ] && exit 0
+          [ -z "$DIFF" ] && echo "status=skipped" >> $GITHUB_OUTPUT && exit 0
           
           PROMPT="Respond in English only. Conventional commit message for this diff. Format: type(scope): description. Diff: $DIFF"
           
@@ -58,11 +71,11 @@ jobs:
           
           if [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && [ "$COMMIT_MSG" != "" ]; then
             set +e
-            OLD_MSG=$(git log -1 --pretty=format:"%s")
+            OLD_MSG="$CURRENT_MSG"
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git commit --amend -m "$COMMIT_MSG" --no-verify
-            git push --force-with-lease origin main
+            git push --force-with-lease origin $TARGET_BRANCH
             set -e
             
             echo "status=success" >> $GITHUB_OUTPUT

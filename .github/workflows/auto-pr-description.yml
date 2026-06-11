@@ -44,6 +44,8 @@ jobs:
           CURRENT_TITLE="${{ github.event.pull_request.title }}"
           TARGET_BRANCH="${{ inputs.target-branch }}"
           
+          echo "Target branch: $TARGET_BRANCH"
+          
           DIFF=$(git diff origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 4000 || echo "")
           
           PROMPT="Respond in English. PR title+desc for diff. Title (72 chars max), blank line, description. Current: $CURRENT_TITLE"
