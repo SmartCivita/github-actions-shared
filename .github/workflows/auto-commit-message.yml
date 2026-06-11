@@ -80,7 +80,7 @@ jobs:
 
           HAS_FIX=false
           for data in "${COMMIT_DATA[@]}"; do
-            if [[ "$data" == FIX|* ]]; then
+            if [[ "$data" == FIX* ]]; then
               HAS_FIX=true
               break
             fi
