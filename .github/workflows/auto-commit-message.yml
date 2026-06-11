@@ -51,6 +51,7 @@ jobs:
           MAX_COMMITS=10
           FIXED_COUNT=0
           declare -a FIXED_COMMITS=()
+          declare -a COMMIT_DATA=()
 
           git log --format="%H|%s" -n $MAX_COMMITS > /tmp/commits.txt
           TOTAL_COUNT=$(wc -l < /tmp/commits.txt)
@@ -59,26 +60,33 @@ jobs:
           echo "total_count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
           echo "fixed_count=0" >> $GITHUB_OUTPUT
 
-          NEEDS_RESET=false
-
+          LINE_NUM=0
           while IFS='|' read -r sha msg; do
             [ -z "$sha" ] && continue
+            LINE_NUM=$((LINE_NUM + 1))
 
             echo ""
-            echo "=== Checking commit: ${sha:0:7} ==="
+            echo "=== Checking commit ${LINE_NUM}: ${sha:0:7} ==="
             echo "Message: $msg"
 
             if echo "$msg" | grep -q ':' || echo "$msg" | grep -q -i '^Merge'; then
               echo "SKIP: already follows conventional commits format"
-              continue
+              COMMIT_DATA+=("SKIP|$sha|$msg")
+            else
+              echo "NEEDS_FIX: generating new message..."
+              COMMIT_DATA+=("FIX|$sha|$msg")
             fi
-
-            echo "NEEDS_FIX"
-            NEEDS_RESET=true
-            break
           done < /tmp/commits.txt
 
-          if [ "$NEEDS_RESET" = false ]; then
+          HAS_FIX=false
+          for data in "${COMMIT_DATA[@]}"; do
+            if [[ "$data" == FIX|* ]]; then
+              HAS_FIX=true
+              break
+            fi
+          done
+
+          if [ "$HAS_FIX" = false ]; then
             echo ""
             echo "=== Summary ==="
             echo "All commits already follow conventional format. Nothing to fix."
@@ -87,64 +95,84 @@ jobs:
           fi
 
           echo ""
+          echo "Saving commit data and diffs before reset..."
+
+          declare -a DIFFS=()
+          LINE_NUM=0
+          while IFS='|' read -r sha msg; do
+            [ -z "$sha" ] && continue
+            LINE_NUM=$((LINE_NUM + 1))
+
+            DIFF_FILE="/tmp/diff_${LINE_NUM}.txt"
+            if git diff "$sha^..$sha" > "$DIFF_FILE" 2>/dev/null; then
+              DIFFS+=("$DIFF_FILE")
+            else
+              DIFFS+=("")
+            fi
+          done < /tmp/commits.txt
+
+          echo ""
           echo "Undoing all $TOTAL_COUNT commits with soft reset..."
           git reset --soft HEAD~$TOTAL_COUNT
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          while IFS='|' read -r sha msg; do
-            [ -z "$sha" ] && continue
+          LINE_NUM=0
+          for data in "${COMMIT_DATA[@]}"; do
+            LINE_NUM=$((LINE_NUM + 1))
+            IFS='|' read -r status sha msg <<< "$data"
 
             echo ""
-            echo "=== Processing commit: ${sha:0:7} ==="
+            echo "=== Processing commit ${LINE_NUM}: ${sha:0:7} ==="
             echo "Original message: $msg"
 
-            if echo "$msg" | grep -q ':' || echo "$msg" | grep -q -i '^Merge'; then
+            if [ "$status" = "SKIP" ]; then
               echo "Recreating commit with original message..."
-              git commit --all --no-edit
+              git commit --all -m "$msg"
             else
-              echo "Generating new commit message..."
+              DIFF_FILE="${DIFFS[$((LINE_NUM - 1))]}"
 
-              DIFF=$(git diff --cached --name-only 2>/dev/null | head -c 500)
-              DIFF_CONTENT=$(git diff --cached 2>/dev/null | head -c 2000)
-
-              if [ -z "$DIFF_CONTENT" ]; then
-                echo "No diff available, using original message"
-                git commit --all -m "$msg"
-              else
-                PROMPT="Respond in English only. Conventional commit message for this diff. Format: type(scope): description. Diff: $DIFF_CONTENT"
-
-                COMMIT_MSG=""
-                for MODEL in mimo-v2.5-free nemotron-3-super-free; do
-                  RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
-                    -H "Authorization: Bearer $OPENCODE_API_KEY" \
-                    -H "Content-Type: application/json" \
-                    -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
-                      '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:512, temperature:0.3}')") || continue
-
-                  COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | cut -c1-72) || continue
-
-                  [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && break
-                done
-
-                if [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && [ "$COMMIT_MSG" != "" ]; then
-                  echo "Generated message: $COMMIT_MSG"
-                  git commit --all -m "$COMMIT_MSG"
-
-                  NEW_SHA=$(git log -1 --format="%H")
-                  FIXED_COMMITS+=("$sha|$NEW_SHA|$msg|$COMMIT_MSG")
-                  FIXED_COUNT=$((FIXED_COUNT + 1))
-                  echo "fixed_count=$FIXED_COUNT" >> $GITHUB_OUTPUT
-                  echo "Commit fixed successfully"
-                else
-                  echo "Failed to generate message, keeping original"
+              if [ -f "$DIFF_FILE" ] && [ -s "$DIFF_FILE" ]; then
+                git apply "$DIFF_FILE" 2>/dev/null || git apply --3way "$DIFF_FILE" 2>/dev/null || {
+                  echo "Failed to apply diff, using original message"
                   git commit --all -m "$msg"
-                fi
+                  continue
+                }
+              fi
+
+              PROMPT="Respond in English only. Conventional commit message for this diff. Format: type(scope): description."
+
+              COMMIT_MSG=""
+              for MODEL in mimo-v2.5-free nemotron-3-super-free; do
+                RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
+                  -H "Authorization: Bearer $OPENCODE_API_KEY" \
+                  -H "Content-Type: application/json" \
+                  -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
+                    '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:512, temperature:0.3}')") || continue
+
+                COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | cut -c1-72) || continue
+
+                [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && break
+              done
+
+              if [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && [ "$COMMIT_MSG" != "" ]; then
+                echo "Generated message: $COMMIT_MSG"
+                git commit --all -m "$COMMIT_MSG"
+
+                NEW_SHA=$(git log -1 --format="%H")
+                FIXED_COMMITS+=("$sha|$NEW_SHA|$msg|$COMMIT_MSG")
+                FIXED_COUNT=$((FIXED_COUNT + 1))
+                echo "fixed_count=$FIXED_COUNT" >> $GITHUB_OUTPUT
+                echo "Commit fixed successfully"
+              else
+                echo "Failed to generate message, keeping original"
+                git commit --all -m "$msg"
               fi
             fi
 
-          done < /tmp/commits.txt
+            rm -f "$DIFF_FILE"
+          done
 
           echo ""
           echo "=== Summary ==="
