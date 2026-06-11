@@ -1,0 +1,84 @@
+name: Auto Commit Message
+
+on:
+  push:
+    branches:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  update-commit-message:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Fix commit message
+        if: ${{ github.event.head_commit && github.event.head_commit.message && !contains(github.event.head_commit.message, ':') && !contains(github.event.head_commit.message, 'Merge') }}
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        id: fix
+        run: |
+          echo "::add-mask::$OPENCODE_API_KEY"
+          
+          DIFF=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 2000)
+          
+          [ -z "$DIFF" ] && exit 0
+          
+          PROMPT="Respond in English only. Conventional commit message for this diff. Format: type(scope): description. Diff: $DIFF"
+          
+          COMMIT_MSG=""
+          
+          for MODEL in mimo-v2.5-free nemotron-3-super-free; do
+            RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
+              -H "Authorization: Bearer $OPENCODE_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
+                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:512, temperature:0.3}')") || continue
+            
+            COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | cut -c1-72) || continue
+            
+            [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && break
+          done
+          
+          if [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && [ "$COMMIT_MSG" != "" ]; then
+            set +e
+            OLD_MSG=$(git log -1 --pretty=format:"%s")
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit --amend -m "$COMMIT_MSG" --no-verify
+            git push --force-with-lease origin main
+            set -e
+            
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "old_msg=$OLD_MSG" >> $GITHUB_OUTPUT
+            echo "new_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
+          else
+            echo "status=skipped" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Discord notification
+        if: ${{ steps.fix.outputs.status == 'success' }}
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          OLD_MSG: ${{ steps.fix.outputs.old_msg }}
+          NEW_MSG: ${{ steps.fix.outputs.new_msg }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p .github/scripts
+          CONTENT=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/.github/scripts/discord-notify.sh?ref=${{ github.sha }}" \
+            | python3 -c "import sys,json,base64; print(base64.b64decode(json.load(sys.stdin)['content']).decode())")
+          echo "$CONTENT" > .github/scripts/discord-notify.sh
+          chmod +x .github/scripts/discord-notify.sh
+          .github/scripts/discord-notify.sh "Commit Processed" 5763719 "" "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}" commit "$OLD_MSG" "$NEW_MSG" "$COMMIT_SHA"
