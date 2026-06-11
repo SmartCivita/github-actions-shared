@@ -3,6 +3,16 @@ name: Auto PR Description
 on:
   pull_request:
     types: [opened, synchronize]
+  workflow_call:
+    inputs:
+      webhook:
+        type: string
+        required: true
+        description: Discord webhook URL
+      target-branch:
+        type: string
+        default: main
+        description: Target branch for PR
 
 permissions:
   contents: read
@@ -11,6 +21,8 @@ permissions:
 jobs:
   update-pr:
     runs-on: ubuntu-latest
+    environment:
+      ${{ inputs.environment || 'production' }}
 
     steps:
       - name: Checkout repository
@@ -29,8 +41,9 @@ jobs:
           
           PR_NUMBER=${{ github.event.pull_request.number }}
           CURRENT_TITLE="${{ github.event.pull_request.title }}"
+          TARGET_BRANCH="${{ inputs.target-branch }}"
           
-          DIFF=$(git diff origin/main...HEAD 2>/dev/null | head -c 4000 || echo "")
+          DIFF=$(git diff origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 4000 || echo "")
           
           PROMPT="Respond in English. PR title+desc for diff. Title (72 chars max), blank line, description. Current: $CURRENT_TITLE"
           
@@ -109,20 +122,17 @@ jobs:
 
       - name: Discord notification
         if: ${{ steps.pr.outputs.status == 'success' }}
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF_NAME: "${{ github.event.pull_request.head.ref }}"
-          GITHUB_ACTOR: ${{ github.event.pull_request.user.login }}
-          OLD_MSG: "${{ github.event.pull_request.title }}"
-          NEW_MSG: "${{ steps.pr.outputs.title }}"
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          COMMIT_SHA: ${{ github.sha }}
-        run: |
-          mkdir -p .github/scripts
-          CONTENT=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/contents/.github/scripts/discord-notify.sh?ref=${{ github.sha }}" \
-            | python3 -c "import sys,json,base64; print(base64.b64decode(json.load(sys.stdin)['content']).decode())")
-          echo "$CONTENT" > .github/scripts/discord-notify.sh
-          chmod +x .github/scripts/discord-notify.sh
-          .github/scripts/discord-notify.sh "PR Updated" 5763719 "" "${{ github.event.pull_request.html_url }}" pr "$OLD_MSG" "$NEW_MSG" "$COMMIT_SHA" "${{ github.event.pull_request.number }}"
+        uses: ./.github/actions/discord-notify
+        with:
+          title: "PR Updated"
+          color: "5763719"
+          description: ""
+          url: "${{ github.event.pull_request.html_url }}"
+          event-type: pr
+          old-msg: "${{ github.event.pull_request.title }}"
+          new-msg: "${{ steps.pr.outputs.title }}"
+          commit-sha: "${{ github.sha }}"
+          pr-number: "${{ github.event.pull_request.number }}"
+          status: success
+          run-url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          webhook: ${{ inputs.webhook }}

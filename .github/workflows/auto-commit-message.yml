@@ -4,6 +4,16 @@ on:
   push:
     branches:
       - "*"
+  workflow_call:
+    inputs:
+      webhook:
+        type: string
+        required: true
+        description: Discord webhook URL
+      ref:
+        type: string
+        default: ${{ github.ref }}
+        description: Git ref to checkout
 
 permissions:
   contents: write
@@ -11,18 +21,22 @@ permissions:
 jobs:
   update-commit-message:
     runs-on: ubuntu-latest
+    environment:
+      ${{ inputs.environment || 'production' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 2
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Fix commit message
         if: ${{ github.event.head_commit && github.event.head_commit.message && !contains(github.event.head_commit.message, ':') && !contains(github.event.head_commit.message, 'Merge') }}
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          DISCORD_WEBHOOK: ${{ inputs.webhook }}
         id: fix
         run: |
           echo "::add-mask::$OPENCODE_API_KEY"
@@ -65,20 +79,16 @@ jobs:
 
       - name: Discord notification
         if: ${{ steps.fix.outputs.status == 'success' }}
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-          GITHUB_ACTOR: ${{ github.actor }}
-          OLD_MSG: ${{ steps.fix.outputs.old_msg }}
-          NEW_MSG: ${{ steps.fix.outputs.new_msg }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          COMMIT_SHA: ${{ github.sha }}
-        run: |
-          mkdir -p .github/scripts
-          CONTENT=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/contents/.github/scripts/discord-notify.sh?ref=${{ github.sha }}" \
-            | python3 -c "import sys,json,base64; print(base64.b64decode(json.load(sys.stdin)['content']).decode())")
-          echo "$CONTENT" > .github/scripts/discord-notify.sh
-          chmod +x .github/scripts/discord-notify.sh
-          .github/scripts/discord-notify.sh "Commit Processed" 5763719 "" "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}" commit "$OLD_MSG" "$NEW_MSG" "$COMMIT_SHA"
+        uses: ./.github/actions/discord-notify
+        with:
+          title: "Commit Processed"
+          color: "5763719"
+          description: ""
+          url: "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          event-type: commit
+          old-msg: "${{ steps.fix.outputs.old_msg }}"
+          new-msg: "${{ steps.fix.outputs.new_msg }}"
+          commit-sha: "${{ github.sha }}"
+          status: success
+          run-url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          webhook: ${{ inputs.webhook }}
