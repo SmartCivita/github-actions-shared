@@ -61,8 +61,10 @@ FOOTER_ESC=$(jq_escape "$FOOTER")
 [ -z "$OLD_MSG" ] && [ -z "$NEW_MSG" ] && echo "[Discord] Skipping: no changes detected" && exit 0
 
 BRANCH_ENC=$(printf '%s' "$BRANCH" | sed 's|/|%2F|g')
+REPO_LINK="[$REPO](https://github.com/$REPO)"
 BRANCH_LINK="[$BRANCH](https://github.com/$REPO/tree/$BRANCH_ENC)"
 AUTHOR_LINK="[$ACTOR](https://github.com/$ACTOR)"
+REPO_LINK_ESC=$(jq_escape "$REPO_LINK")
 BRANCH_LINK_ESC=$(jq_escape "$BRANCH_LINK")
 AUTHOR_LINK_ESC=$(jq_escape "$AUTHOR_LINK")
 
@@ -85,19 +87,19 @@ if [ -n "$OLD_MSG" ] && [ -n "$NEW_MSG" ] && [ "$OLD_MSG" != "" ] && [ "$NEW_MSG
   OLD_ESC=$(jq_escape "$OLD_MSG")
   NEW_ESC=$(jq_escape "$NEW_MSG")
   if [ "$EVENT_TYPE" = "pr" ] && [ -n "$PR_LINK" ]; then
-    FIELDS_JSON="[{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"PR\",\"value\":\"$PR_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true},{\"name\":\"Before\",\"value\":\"$OLD_ESC\",\"inline\":false},{\"name\":\"After\",\"value\":\"$NEW_ESC\",\"inline\":false}]"
+    FIELDS_JSON="[{\"name\":\"Repository\",\"value\":\"$REPO_LINK_ESC\",\"inline\":true},{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"PR\",\"value\":\"$PR_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true},{\"name\":\"Before\",\"value\":\"$OLD_ESC\",\"inline\":false},{\"name\":\"After\",\"value\":\"$NEW_ESC\",\"inline\":false}]"
   elif [ -n "$COMMIT_LINK" ]; then
-    FIELDS_JSON="[{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Commit\",\"value\":\"$COMMIT_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true},{\"name\":\"Before\",\"value\":\"$OLD_ESC\",\"inline\":false},{\"name\":\"After\",\"value\":\"$NEW_ESC\",\"inline\":false}]"
+    FIELDS_JSON="[{\"name\":\"Repository\",\"value\":\"$REPO_LINK_ESC\",\"inline\":true},{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Commit\",\"value\":\"$COMMIT_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true},{\"name\":\"Before\",\"value\":\"$OLD_ESC\",\"inline\":false},{\"name\":\"After\",\"value\":\"$NEW_ESC\",\"inline\":false}]"
   else
-    FIELDS_JSON="[{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true},{\"name\":\"Before\",\"value\":\"$OLD_ESC\",\"inline\":false},{\"name\":\"After\",\"value\":\"$NEW_ESC\",\"inline\":false}]"
+    FIELDS_JSON="[{\"name\":\"Repository\",\"value\":\"$REPO_LINK_ESC\",\"inline\":true},{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true},{\"name\":\"Before\",\"value\":\"$OLD_ESC\",\"inline\":false},{\"name\":\"After\",\"value\":\"$NEW_ESC\",\"inline\":false}]"
   fi
 else
   if [ "$EVENT_TYPE" = "pr" ] && [ -n "$PR_LINK" ]; then
-    FIELDS_JSON="[{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"PR\",\"value\":\"$PR_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true}]"
+    FIELDS_JSON="[{\"name\":\"Repository\",\"value\":\"$REPO_LINK_ESC\",\"inline\":true},{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"PR\",\"value\":\"$PR_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true}]"
   elif [ -n "$COMMIT_LINK" ]; then
-    FIELDS_JSON="[{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Commit\",\"value\":\"$COMMIT_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true}]"
+    FIELDS_JSON="[{\"name\":\"Repository\",\"value\":\"$REPO_LINK_ESC\",\"inline\":true},{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Commit\",\"value\":\"$COMMIT_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true}]"
   else
-    FIELDS_JSON="[{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true}]"
+    FIELDS_JSON="[{\"name\":\"Repository\",\"value\":\"$REPO_LINK_ESC\",\"inline\":true},{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true}]"
   fi
 fi
 
