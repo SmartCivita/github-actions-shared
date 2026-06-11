@@ -5,11 +5,6 @@ on:
     branches:
       - "*"
   workflow_call:
-    inputs:
-      target-branch:
-        type: string
-        default: main
-        description: Target branch to push amended commits
     secrets:
       PERSONAL_ACCESS_TOKEN:
         required: true
@@ -36,7 +31,7 @@ jobs:
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          TARGET_BRANCH: ${{ inputs.target-branch }}
+          TARGET_BRANCH: ${{ github.ref_name }}
         id: fix
         run: |
           echo "::add-mask::$OPENCODE_API_KEY"
