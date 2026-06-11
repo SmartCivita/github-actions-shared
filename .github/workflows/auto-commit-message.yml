@@ -19,23 +19,15 @@ permissions:
 jobs:
   update-commit-message:
     runs-on: ubuntu-latest
-    outputs:
-      fixed_count: ${{ steps.process.outputs.fixed_count }}
-      total_count: ${{ steps.process.outputs.total_count }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 2
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      - name: Fetch latest remote state
-        run: |
-          git fetch origin ${{ github.ref_name }}
-
-      - name: Process commits
-        id: process
+      - name: Fix commit message
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
@@ -44,178 +36,85 @@ jobs:
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ACTOR: ${{ github.actor }}
+        id: fix
         run: |
-          set -e
-
           echo "::add-mask::$OPENCODE_API_KEY"
 
           BRANCH="$TARGET_BRANCH"
-          echo "Processing commits on branch: $BRANCH"
+          echo "Processing commit on branch: $BRANCH"
 
-          MAX_COMMITS=10
-          FIXED_COUNT=0
-          declare -a FIXED_COMMITS=()
-          declare -a COMMIT_DATA=()
+          CURRENT_MSG=$(git log -1 --pretty=format:"%s")
 
-          git log --format="%H|%s" -n $MAX_COMMITS > /tmp/commits.txt
-          TOTAL_COUNT=$(wc -l < /tmp/commits.txt)
-          echo "Found $TOTAL_COUNT commits to process"
-
-          echo "total_count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
-          echo "fixed_count=0" >> $GITHUB_OUTPUT
-
-          LINE_NUM=0
-          while IFS='|' read -r sha msg; do
-            [ -z "$sha" ] && continue
-            LINE_NUM=$((LINE_NUM + 1))
-
-            echo ""
-            echo "=== Checking commit ${LINE_NUM}: ${sha:0:7} ==="
-            echo "Message: $msg"
-
-            if echo "$msg" | grep -q ':' || echo "$msg" | grep -q -i '^Merge'; then
-              echo "SKIP: already follows conventional commits format"
-              COMMIT_DATA+=("SKIP|$sha|$msg")
-            else
-              echo "NEEDS_FIX: generating new message..."
-              COMMIT_DATA+=("FIX|$sha|$msg")
-            fi
-          done < /tmp/commits.txt
-
-          HAS_FIX=false
-          for data in "${COMMIT_DATA[@]}"; do
-            if [[ "$data" == FIX* ]]; then
-              HAS_FIX=true
-              break
-            fi
-          done
-
-          if [ "$HAS_FIX" = false ]; then
-            echo ""
-            echo "=== Summary ==="
-            echo "All commits already follow conventional format. Nothing to fix."
-            echo "fixed_count=0" >> $GITHUB_OUTPUT
+          if echo "$CURRENT_MSG" | grep -q ':' || echo "$CURRENT_MSG" | grep -q -i '^Merge'; then
+            echo "status=skipped" >> $GITHUB_OUTPUT
+            echo "Skipping: message already follows conventional commits or is a merge"
             exit 0
           fi
 
-          echo ""
-          echo "Saving commit data and diffs before reset..."
+          DIFF=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 2000)
 
-          declare -a DIFFS=()
-          LINE_NUM=0
-          while IFS='|' read -r sha msg; do
-            [ -z "$sha" ] && continue
-            LINE_NUM=$((LINE_NUM + 1))
+          [ -z "$DIFF" ] && echo "status=skipped" >> $GITHUB_OUTPUT && exit 0
 
-            DIFF_FILE="/tmp/diff_${LINE_NUM}.txt"
-            if git diff "$sha^..$sha" > "$DIFF_FILE" 2>/dev/null; then
-              DIFFS+=("$DIFF_FILE")
-            else
-              DIFFS+=("")
-            fi
-          done < /tmp/commits.txt
+          PROMPT="Respond in English only. Conventional commit message for this diff. Format: type(scope): description. Diff: $DIFF"
 
-          echo ""
-          echo "Undoing all $TOTAL_COUNT commits with soft reset..."
-          git reset --soft HEAD~$TOTAL_COUNT
+          COMMIT_MSG=""
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for MODEL in mimo-v2.5-free nemotron-3-super-free; do
+            RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
+              -H "Authorization: Bearer $OPENCODE_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
+                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:512, temperature:0.3}')") || continue
 
-          LINE_NUM=0
-          for data in "${COMMIT_DATA[@]}"; do
-            LINE_NUM=$((LINE_NUM + 1))
-            IFS='|' read -r status sha msg <<< "$data"
+            COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | cut -c1-72) || continue
 
-            echo ""
-            echo "=== Processing commit ${LINE_NUM}: ${sha:0:7} ==="
-            echo "Original message: $msg"
-
-            if [ "$status" = "SKIP" ]; then
-              echo "Recreating commit with original message..."
-              git commit --all -m "$msg"
-            else
-              DIFF_FILE="${DIFFS[$((LINE_NUM - 1))]}"
-
-              if [ -f "$DIFF_FILE" ] && [ -s "$DIFF_FILE" ]; then
-                git apply "$DIFF_FILE" 2>/dev/null || git apply --3way "$DIFF_FILE" 2>/dev/null || {
-                  echo "Failed to apply diff, using original message"
-                  git commit --all -m "$msg"
-                  continue
-                }
-              fi
-
-              PROMPT="Respond in English only. Conventional commit message for this diff. Format: type(scope): description."
-
-              COMMIT_MSG=""
-              for MODEL in mimo-v2.5-free nemotron-3-super-free; do
-                RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
-                  -H "Authorization: Bearer $OPENCODE_API_KEY" \
-                  -H "Content-Type: application/json" \
-                  -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
-                    '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:512, temperature:0.3}')") || continue
-
-                COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | cut -c1-72) || continue
-
-                [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && break
-              done
-
-              if [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && [ "$COMMIT_MSG" != "" ]; then
-                echo "Generated message: $COMMIT_MSG"
-                git commit --all -m "$COMMIT_MSG"
-
-                NEW_SHA=$(git log -1 --format="%H")
-                FIXED_COMMITS+=("$sha|$NEW_SHA|$msg|$COMMIT_MSG")
-                FIXED_COUNT=$((FIXED_COUNT + 1))
-                echo "fixed_count=$FIXED_COUNT" >> $GITHUB_OUTPUT
-                echo "Commit fixed successfully"
-              else
-                echo "Failed to generate message, keeping original"
-                git commit --all -m "$msg"
-              fi
-            fi
-
-            rm -f "$DIFF_FILE"
+            [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && break
           done
 
-          echo ""
-          echo "=== Summary ==="
-          echo "Total commits processed: $TOTAL_COUNT"
-          echo "Commits fixed: $FIXED_COUNT"
+          if [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && [ "$COMMIT_MSG" != "" ]; then
+            set +e
+            OLD_MSG="$CURRENT_MSG"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit --amend -m "$COMMIT_MSG" --no-verify
+            git push --force-with-lease origin $BRANCH
+            set -e
 
-          if [ $FIXED_COUNT -gt 0 ]; then
-            echo "Pushing changes to $BRANCH..."
-            git push --force-with-lease origin "$BRANCH"
-
-            for entry in "${FIXED_COMMITS[@]}"; do
-              IFS='|' read -r old_sha new_sha old_msg new_msg <<< "$entry"
-
-              COMMIT_LINK="[${new_sha:0:7}]($REPO_URL/commit/$new_sha)"
-              BRANCH_LINK="[$BRANCH]($REPO_URL/tree/$BRANCH)"
-              AUTHOR_LINK="[$ACTOR](https://github.com/$ACTOR)"
-              REPO_LINK="[$REPO_NAME]($REPO_URL)"
-
-              OLD_MSG_ESC=$(printf '%s' "$old_msg" | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-200)
-              NEW_MSG_ESC=$(printf '%s' "$new_msg" | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-200)
-              COMMIT_LINK_ESC=$(printf '%s' "$COMMIT_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
-              BRANCH_LINK_ESC=$(printf '%s' "$BRANCH_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
-              AUTHOR_LINK_ESC=$(printf '%s' "$AUTHOR_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
-              REPO_LINK_ESC=$(printf '%s' "$REPO_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
-
-              TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-              PAYLOAD="{\"username\":\"AutoCommit Bot\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"embeds\":[{\"title\":\"📝 Commit Message Fixed\",\"url\":\"$RUN_URL\",\"color\":5763719,\"fields\":[{\"name\":\"Repository\",\"value\":\"$REPO_LINK_ESC\",\"inline\":true},{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Commit\",\"value\":\"$COMMIT_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true},{\"name\":\"Before\",\"value\":\"$OLD_MSG_ESC\",\"inline\":false},{\"name\":\"After\",\"value\":\"$NEW_MSG_ESC\",\"inline\":false}],\"footer\":{\"text\":\"GitHub Actions\",\"icon_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\"},\"timestamp\":\"$TIMESTAMP\"}]}"
-
-              echo "Sending Discord notification for commit ${new_sha:0:7}..."
-              curl -sf -X POST "$DISCORD_WEBHOOK" \
-                -H "Content-Type: application/json" \
-                -d "$PAYLOAD" && echo " [Discord] Notification sent" || echo " [Discord] Notification failed"
-            done
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "old_msg=$OLD_MSG" >> $GITHUB_OUTPUT
+            echo "new_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
           else
-            echo "No commits needed fixing. Nothing to push."
+            echo "status=skipped" >> $GITHUB_OUTPUT
           fi
 
-      - name: No commits to fix
-        if: ${{ steps.process.outputs.fixed_count == '0' }}
+      - name: Discord notification
+        if: ${{ steps.fix.outputs.status == 'success' }}
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          REPO_NAME: ${{ github.repository }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ACTOR: ${{ github.actor }}
+          OLD_MSG: ${{ steps.fix.outputs.old_msg }}
+          NEW_MSG: ${{ steps.fix.outputs.new_msg }}
+          SHA: ${{ github.sha }}
         run: |
-          echo "No commits needed fixing."
+          COMMIT_LINK="[${SHA:0:7}]($REPO_URL/commit/$SHA)"
+          BRANCH_LINK="[${{ github.ref_name }}]($REPO_URL/tree/${{ github.ref_name }})"
+          AUTHOR_LINK="[$ACTOR](https://github.com/$ACTOR)"
+          REPO_LINK="[$REPO_NAME]($REPO_URL)"
+
+          OLD_MSG_ESC=$(printf '%s' "$OLD_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-200)
+          NEW_MSG_ESC=$(printf '%s' "$NEW_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-200)
+          COMMIT_LINK_ESC=$(printf '%s' "$COMMIT_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
+          BRANCH_LINK_ESC=$(printf '%s' "$BRANCH_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
+          AUTHOR_LINK_ESC=$(printf '%s' "$AUTHOR_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
+          REPO_LINK_ESC=$(printf '%s' "$REPO_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
+
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          PAYLOAD="{\"username\":\"AutoCommit Bot\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"embeds\":[{\"title\":\"📝 Commit Message Fixed\",\"url\":\"$RUN_URL\",\"color\":5763719,\"fields\":[{\"name\":\"Repository\",\"value\":\"$REPO_LINK_ESC\",\"inline\":true},{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Commit\",\"value\":\"$COMMIT_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true},{\"name\":\"Before\",\"value\":\"$OLD_MSG_ESC\",\"inline\":false},{\"name\":\"After\",\"value\":\"$NEW_MSG_ESC\",\"inline\":false}],\"footer\":{\"text\":\"GitHub Actions\",\"icon_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\"},\"timestamp\":\"$TIMESTAMP\"}]}"
+
+          curl -sf -X POST "$DISCORD_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" && echo " [Discord] Notification sent" || echo " [Discord] Notification failed"
