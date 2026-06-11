@@ -5,19 +5,12 @@ on:
     branches:
       - "*"
   workflow_call:
-    inputs:
-      webhook:
-        type: string
-        required: true
-        description: Discord webhook URL
-      ref:
-        type: string
-        default: ${{ github.ref }}
-        description: Git ref to checkout
     secrets:
       PERSONAL_ACCESS_TOKEN:
         required: true
       OPENCODE_API_KEY:
+        required: true
+      DISCORD_WEBHOOK:
         required: true
 
 permissions:
@@ -26,22 +19,19 @@ permissions:
 jobs:
   update-commit-message:
     runs-on: ubuntu-latest
-    environment:
-      ${{ inputs.environment || 'production' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 2
-          ref: ${{ inputs.ref }}
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Fix commit message
         if: ${{ github.event.head_commit && github.event.head_commit.message && !contains(github.event.head_commit.message, ':') && !contains(github.event.head_commit.message, 'Merge') }}
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          DISCORD_WEBHOOK: ${{ inputs.webhook }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         id: fix
         run: |
           echo "::add-mask::$OPENCODE_API_KEY"
@@ -96,4 +86,4 @@ jobs:
           commit-sha: "${{ github.sha }}"
           status: success
           run-url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          webhook: ${{ inputs.webhook }}
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}

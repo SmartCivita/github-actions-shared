@@ -5,10 +5,6 @@ on:
     types: [opened, synchronize]
   workflow_call:
     inputs:
-      webhook:
-        type: string
-        required: true
-        description: Discord webhook URL
       target-branch:
         type: string
         default: main
@@ -18,6 +14,8 @@ on:
         required: true
       OPENCODE_API_KEY:
         required: true
+      DISCORD_WEBHOOK:
+        required: true
 
 permissions:
   contents: read
@@ -26,8 +24,6 @@ permissions:
 jobs:
   update-pr:
     runs-on: ubuntu-latest
-    environment:
-      ${{ inputs.environment || 'production' }}
 
     steps:
       - name: Checkout repository
@@ -140,4 +136,4 @@ jobs:
           pr-number: "${{ github.event.pull_request.number }}"
           status: success
           run-url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          webhook: ${{ inputs.webhook }}
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
