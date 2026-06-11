@@ -30,6 +30,10 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
+      - name: Fetch latest remote state
+        run: |
+          git fetch origin ${{ github.ref_name }}
+
       - name: Process commits
         id: process
         env:
