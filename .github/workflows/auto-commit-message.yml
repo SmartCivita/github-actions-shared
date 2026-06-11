@@ -74,7 +74,7 @@ jobs:
 
       - name: Discord notification
         if: ${{ steps.fix.outputs.status == 'success' }}
-        uses: ./.github/actions/discord-notify
+        uses: SmartCivita/github-actions-shared/.github/actions/discord-notify@main
         with:
           title: "Commit Processed"
           color: "5763719"
