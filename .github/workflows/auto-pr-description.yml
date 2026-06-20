@@ -41,7 +41,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         id: pr
         run: |
+          set +x
           echo "::add-mask::$OPENCODE_API_KEY"
+          echo "GITHUB_TOKEN present: ${#GITHUB_TOKEN}"
 
           PR_NUMBER=${{ github.event.pull_request.number }}
           CURRENT_TITLE="${{ github.event.pull_request.title }}"
@@ -49,41 +51,60 @@ jobs:
 
           echo "Target branch: $TARGET_BRANCH"
 
+          git fetch origin $TARGET_BRANCH:$TARGET_BRANCH 2>/dev/null || echo "Fetch failed, continuing..."
           DIFF=$(git diff origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 6000 || echo "")
           CHANGED_FILES=$(git diff --name-only origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 2000 || echo "")
           ADDITIONS=$(git diff --numstat origin/$TARGET_BRANCH...HEAD 2>/dev/null | awk '{add+=$1} END {print add}' || echo "0")
           DELETIONS=$(git diff --numstat origin/$TARGET_BRANCH...HEAD 2>/dev/null | awk '{del+=$2} END {print del}' || echo "0")
 
+          echo "Diff length: ${#DIFF}, Files: $CHANGED_FILES"
+
           PROMPT="You are a professional PR description generator. Your ONLY output should be a properly formatted PR title and description. RULES: - Output ONLY the PR title and description. NO introductions, NO explanations, NO greetings, NO apologies, NO signatures. - Title: max 72 chars, clear and specific - Description: Markdown format, include sections. Be specific about WHAT changed and WHY. FORMAT: Title line (72 chars max, no quotes) then blank line then Description (markdown, multiple lines allowed). EXAMPLES OF GOOD OUTPUT: Title: feat(auth) add JWT refresh token rotation. Then a blank line. Then Description in markdown with sections. EXAMPLES OF BAD OUTPUT (NEVER DO THESE): Hello I would be happy to help you with that PR description; Here is a great PR description for your changes; Sure let me create a professional PR description. CURRENT PR TITLE: $CURRENT_TITLE. CHANGED FILES: $CHANGED_FILES. DIFF STATS: plus $ADDITIONS minus $DELETIONS lines. DIFF (actual code changes): $DIFF. Generate the PR title and description now. Only output the title and description, nothing else."
 
           RESPONSE=""
+          API_ERROR=""
 
           for MODEL in opencode-go/Qwen3.7-Max; do
-            RESPONSE=$(curl -sf --connect-timeout 10 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
+            echo "Calling API with model: $MODEL"
+            RESPONSE=$(curl -sf --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
               -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
-                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:4096, temperature:0.3}')")
-
-            [ $? -eq 0 ] && break
+                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:4096, temperature:0.3}')") || API_ERROR=$?
+            echo "API call completed with code: $?"
+            [ -n "$RESPONSE" ] && break
           done
 
+          echo "Response length: ${#RESPONSE}"
+          echo "Response preview: ${RESPONSE:0:200}"
+
+          if [ -z "$RESPONSE" ] || [ "$RESPONSE" = "null" ]; then
+            echo "API returned empty response, skipping"
+            echo "status=skipped" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           PR_CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | sed '/^[*># ]*/s///' | sed '/^Hello\|^I would\|^Here is\|^Sure\|^Great\|^Thanks\|^Absolutely\|^I can\|^I will/d')
+
+          echo "PR_CONTENT length: ${#PR_CONTENT}"
 
           if [ -n "$PR_CONTENT" ] && [ "$PR_CONTENT" != "null" ] && [ ${#PR_CONTENT} -gt 10 ]; then
             NEW_TITLE=$(echo "$PR_CONTENT" | head -1 | cut -c1-72)
             NEW_BODY=$(echo "$PR_CONTENT" | tail -n +3 | head -200)
 
+            echo "Updating PR#$PR_NUMBER with title: $NEW_TITLE"
+
             RESP=$(curl -sf --connect-timeout 10 --max-time 30 -X PATCH \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER" \
-              -d "$(jq -n --arg t "$NEW_TITLE" --arg b "$NEW_BODY" '{title:$t, body:$b}')")
+              -d "$(jq -n --arg t "$NEW_TITLE" --arg b "$NEW_BODY" '{title:$t, body:$b}')") || echo "PATCH failed: $?"
             echo "PATCH response: $RESP"
 
             echo "status=success" >> $GITHUB_OUTPUT
             echo "title=$NEW_TITLE" >> $GITHUB_OUTPUT
           else
+            echo "PR_CONTENT too short or empty, skipping"
             echo "status=skipped" >> $GITHUB_OUTPUT
           fi
 
@@ -93,31 +114,35 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         id: labels
         run: |
+          set +x
           PR_NUMBER=${{ github.event.pull_request.number }}
           PR_AUTHOR="${{ github.event.pull_request.user.login }}"
           TARGET_BRANCH="${{ inputs.target-branch }}"
 
+          echo "Processing PR#$PR_NUMBER for labels"
+
           FILES=$(curl -sf --connect-timeout 10 --max-time 15 -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/files" | jq -r '.[].filename')
+            "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/files" | jq -r '.[].filename') || echo "Files fetch failed"
 
-          echo "Retrieved files for PR#$PR_NUMBER"
+          echo "Files: $FILES"
 
+          git fetch origin $TARGET_BRANCH:$TARGET_BRANCH 2>/dev/null || echo "Fetch failed"
           DIFF=$(git diff origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 3000 || echo "")
 
           LABEL_PROMPT="Analyze this PR diff and suggest GitHub labels. Output ONLY comma-separated labels from this list: bug, enhancement, feature, documentation, ci, testing, dependencies, refactor, security, performance, breaking-change, hotfix, backend, frontend, mobile, devops, configuration, chore, design, api. Rules: - Output ONLY labels as comma-separated values, NO explanations. - If no clear match output: chore. - Match based on actual code changes not just file names. - Maximum 4 labels. DIFF: $DIFF"
 
           LABEL_RESPONSE=""
           for MODEL in opencode-go/Qwen3.7-Max; do
-            LABEL_RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
+            LABEL_RESPONSE=$(curl -sf --connect-timeout 15 --max-time 45 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
               -d "$(jq -n --arg prompt "$LABEL_PROMPT" --arg model "$MODEL" \
-                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:100, temperature:0.1}')")
-            [ $? -eq 0 ] && break
+                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:100, temperature:0.1}')") || echo "Label API failed"
+            [ -n "$LABEL_RESPONSE" ] && break
           done
 
-          LABEL_SUGGESTION=$(echo "$LABEL_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | tr -d ' ' | sed 's/,/, /g' | cut -c1-100)
+          LABEL_SUGGESTION=$(echo "$LABEL_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | tr -d ' ' | sed 's/,/, /g' | cut -c1-100) || echo "Label parsing failed"
 
           FILE_BASED_LABELS=$(echo "$FILES" | jq -r '
             [., inputs] |
@@ -129,28 +154,30 @@ jobs:
             if any(.[]; test("\\.(yml|yaml|toml|ini|conf|config)$")) then "configuration" else empty end,
             if any(.[]; test("\\.(css|scss|less|html|vue|jsx|tsx)$")) then "frontend" else empty end,
             if any(.[]; test("(api|routes|endpoints|controller)")) then "api" else empty end
-          ' | grep -v "^$" | sort -u | paste -sd, -)
+          ' | grep -v "^$" | sort -u | paste -sd, -) || echo "File labels failed"
 
-          COMBINED_LABELS=$(echo "$LABEL_SUGGESTION,$FILE_BASED_LABELS" | tr ',' '\n' | grep -v "^$" | sort -u | head -5 | paste -sd, -)
+          COMBINED_LABELS=$(echo "$LABEL_SUGGESTION,$FILE_BASED_LABELS" | tr ',' '\n' | grep -v "^$" | sort -u | head -5 | paste -sd, -) || echo "Combining labels failed"
+
+          echo "Final labels: $COMBINED_LABELS"
 
           [ -n "$COMBINED_LABELS" ] && curl -sf --connect-timeout 10 --max-time 15 -X POST \
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/labels" \
-            -d "$(jq -n --arg l "$COMBINED_LABELS" '{labels:($l | split(","))}')" && echo "Labels applied: $COMBINED_LABELS"
+            -d "$(jq -n --arg l "$COMBINED_LABELS" '{labels:($l | split(","))}')" && echo "Labels applied: $COMBINED_LABELS" || echo "Labels apply failed"
 
           [ "$PR_AUTHOR" != "JosephRiosHenao" ] && \
             curl -sf --connect-timeout 10 --max-time 15 -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/requested_reviewers" \
-              -d '{"reviewers":["JosephRiosHenao"]}'
+              -d '{"reviewers":["JosephRiosHenao"]}' && echo "Reviewers requested" || echo "Reviewers failed"
 
           curl -sf --connect-timeout 10 --max-time 15 -X POST \
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/assignees" \
-            -d "$(jq -n --arg u "$PR_AUTHOR" '{assignees:[$u]}')"
+            -d "$(jq -n --arg u "$PR_AUTHOR" '{assignees:[$u]}')" && echo "Assignee added" || echo "Assignee failed"
 
           echo "labels=$COMBINED_LABELS" >> $GITHUB_OUTPUT
           echo "assignee=$PR_AUTHOR" >> $GITHUB_OUTPUT
