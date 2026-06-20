@@ -43,25 +43,34 @@ jobs:
           ACTOR: ${{ github.actor }}
         id: fix
         run: |
+          echo "========================================"
+          echo "AUTO-COMMIT: Starting commit message fix"
+          echo "========================================"
+          
           BRANCH="$TARGET_BRANCH"
           CURRENT_MSG=$(git log -1 --pretty=format:"%s")
+          echo "[DEBUG] Current commit message: '$CURRENT_MSG'"
 
           if echo "$CURRENT_MSG" | grep -q ':' || echo "$CURRENT_MSG" | grep -q -i '^Merge'; then
+            echo "[DEBUG] Message contains ':' or is a merge - skipping"
             echo "status=skipped" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           DIFF=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 2000)
+          echo "[DEBUG] Diff length: ${#DIFF} chars"
 
-          [ -z "$DIFF" ] && echo "status=skipped" >> $GITHUB_OUTPUT && exit 0
+          [ -z "$DIFF" ] && echo "[DEBUG] No diff found - skipping" && echo "status=skipped" >> $GITHUB_OUTPUT && exit 0
 
           CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null)
           FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l)
+          echo "[DEBUG] Changed files ($FILE_COUNT): $CHANGED_FILES"
 
           PROMPT="You are a professional commit message generator. Your ONLY output should be a single conventional commit message. RULES: - Output ONLY the commit message. NO introductions, NO explanations, NO greetings, NO apologies. - Format: type(scope) description (72 chars max). Use lowercase for description, no period at end. - Be specific about what actually changed. EXAMPLES OF GOOD OUTPUT: feat(auth) add OAuth2 login support; fix(api) correct response format for users endpoint; refactor(db) extract connection pooling logic; docs(readme) update installation instructions; chore(deps) upgrade express to v4.18.0. EXAMPLES OF BAD OUTPUT (NEVER DO THESE): Hello I would be happy to help you; Here is a good commit message; Sure I would be happy to create a commit message. CHANGED FILES ($FILE_COUNT files): $CHANGED_FILES. DIFF (actual code changes): $DIFF. Generate the commit message now. Only output the commit message, nothing else."
 
           COMMIT_MSG=""
           for MODEL in qwen3.6-plus; do
+            echo "[DEBUG] Calling OpenCode API with model: $MODEL"
             RESPONSE=$(jq -n \
               --arg model "$MODEL" \
               --arg content "$PROMPT" \
@@ -70,30 +79,56 @@ jobs:
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
               -d @-)
-            [ $? -ne 0 ] && continue
+            CURL_EXIT=$?
+            echo "[DEBUG] curl exit code: $CURL_EXIT"
+            echo "[DEBUG] API Response length: ${#RESPONSE} chars"
+            echo "[DEBUG] Raw API Response (first 500 chars): ${RESPONSE:0:500}"
+            
+            [ $CURL_EXIT -ne 0 ] && echo "[DEBUG] curl failed - trying next model" && continue
 
-            COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | sed 's/^[*># ]*//' | cut -c1-72) || continue
+            COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | sed 's/^[*># ]*//' | cut -c1-72)
+            echo "[DEBUG] Extracted commit message: '$COMMIT_MSG'"
+            
+            [ -z "$COMMIT_MSG" ] || [ "$COMMIT_MSG" = "null" ] && echo "[DEBUG] Empty/null response - trying next model" && continue
 
             if echo "$COMMIT_MSG" | grep -qi "^Hello\|^I would\|^Here is\|^Sure\|^Great\|^Thanks\|^Absolutely"; then
+              echo "[DEBUG] AI greeting detected - trying next model"
               continue
             fi
 
-            [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && break
+            echo "[DEBUG] Valid commit message received: '$COMMIT_MSG'"
+            break
           done
+
+          echo "========================================"
+          echo "[DEBUG] Final COMMIT_MSG: '$COMMIT_MSG'"
+          echo "========================================"
 
           if [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && [ "$COMMIT_MSG" != "" ]; then
             set +e
             OLD_MSG="$CURRENT_MSG"
+            echo "[DEBUG] About to amend commit from '$OLD_MSG' to '$COMMIT_MSG'"
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git commit --amend -m "$COMMIT_MSG" --no-verify
+            AMEND_EXIT=$?
+            echo "[DEBUG] git amend exit code: $AMEND_EXIT"
             git push --force-with-lease origin $BRANCH
+            PUSH_EXIT=$?
+            echo "[DEBUG] git push exit code: $PUSH_EXIT"
             set -e
 
-            echo "status=success" >> $GITHUB_OUTPUT
-            echo "old_msg=$OLD_MSG" >> $GITHUB_OUTPUT
-            echo "new_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
+            if [ $AMEND_EXIT -eq 0 ] && [ $PUSH_EXIT -eq 0 ]; then
+              echo "[SUCCESS] Commit message amended and pushed successfully!"
+              echo "status=success" >> $GITHUB_OUTPUT
+              echo "old_msg=$OLD_MSG" >> $GITHUB_OUTPUT
+              echo "new_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
+            else
+              echo "[ERROR] Amend or push failed"
+              echo "status=skipped" >> $GITHUB_OUTPUT
+            fi
           else
+            echo "[DEBUG] No valid commit message - skipping"
             echo "status=skipped" >> $GITHUB_OUTPUT
           fi
 
