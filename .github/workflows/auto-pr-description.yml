@@ -57,8 +57,8 @@ jobs:
 
           echo "Diff length: ${#DIFF}, Files: $CHANGED_FILES"
 
-          SHORT_DIFF=$(echo "$DIFF" | cut -c1-2000)
-          PROMPT="Generate a PR title and description. Title max 72 chars. Description in markdown. Current title: $CURRENT_TITLE. Files: $CHANGED_FILES. Diff preview: $SHORT_DIFF. Output only title then newline then description, nothing else."
+          SHORT_DIFF=$(echo "$DIFF" | tr '\n' ' ' | tr '\r' ' ' | cut -c1-1000 | sed 's/"/'"'"'/g')
+          PROMPT="Generate PR title and description. Title max 72 chars. Current title: $CURRENT_TITLE. Files: $CHANGED_FILES. Changes: $SHORT_DIFF. Output title then newline then description only."
 
           RESPONSE=""
           API_ERROR=""
