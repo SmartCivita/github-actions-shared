@@ -47,15 +47,15 @@ jobs:
           DIFF=$(git diff origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 6000 || echo "")
           CHANGED_FILES=$(git diff --name-only origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 2000 || echo "")
 
-          SHORT_DIFF=$(echo "$DIFF" | tr '\n' ' ' | tr '\r' ' ' | cut -c1-1000 | sed 's/"/'"'"'/g')
-          PROMPT="Generate PR title and description. Title max 72 chars. Current title: $CURRENT_TITLE. Files: $CHANGED_FILES. Changes: $SHORT_DIFF. Output title then newline then description only."
+          FULL_DIFF=$(echo "$DIFF" | tr '\n' ' ' | tr '\r' ' ' | sed 's/"/'"'"'/g')
+          PROMPT="You are a professional PR description generator. Generate a detailed PR title and description based on the changes below. Current title: $CURRENT_TITLE. CHANGED FILES ($FILE_COUNT files): $CHANGED_FILES. CODE CHANGES: $FULL_DIFF. RULES: Output ONLY title (max 72 chars, no quotes) then newline then description in markdown with sections: Summary, Changes Made, Files Modified. Be specific about WHAT changed and WHY. Output title then newline then description only."
 
           RESPONSE=""
-          for MODEL in mimo-v2.5-free; do
+          for MODEL in qwen3.6-plus; do
             RESPONSE=$(jq -n \
               --arg model "$MODEL" \
               --arg content "$PROMPT" \
-              '{"model":$model,"messages":[{"role":"user","content":$content}],"max_tokens":2048,"temperature":0.3}' | \
+              '{"model":$model,"messages":[{"role":"user","content":$content}],"max_tokens":4096,"temperature":0.3}' | \
               curl -s --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
@@ -98,10 +98,10 @@ jobs:
           git fetch origin $TARGET_BRANCH:$TARGET_BRANCH 2>/dev/null || true
           DIFF=$(git diff origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 3000 || echo "")
 
-          LABEL_PROMPT="Analyze this PR diff and suggest GitHub labels. Output ONLY comma-separated labels from this list: bug, enhancement, feature, documentation, ci, testing, dependencies, refactor, security, performance, breaking-change, hotfix, backend, frontend, mobile, devops, configuration, chore, design, api. Rules: - Output ONLY labels as comma-separated values, NO explanations. - If no clear match output: chore. - Match based on actual code changes not just file names. - Maximum 4 labels. DIFF: $DIFF"
+          LABEL_PROMPT="Analyze this PR code changes and suggest exactly 3-5 GitHub labels. Available labels: bug, enhancement, feature, documentation, ci, testing, dependencies, refactor, security, performance, breaking-change, hotfix, backend, frontend, mobile, devops, configuration, chore, design, api. Output ONLY the labels as comma-separated values, NO explanations, NO additional text. Example output: feature,backend,api"
 
           LABEL_RESPONSE=""
-          for MODEL in mimo-v2.5-free; do
+          for MODEL in qwen3.6-plus; do
             LABEL_RESPONSE=$(jq -n \
               --arg model "$MODEL" \
               --arg content "$LABEL_PROMPT" \
