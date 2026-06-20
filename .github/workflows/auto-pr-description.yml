@@ -16,8 +16,6 @@ on:
         required: true
       DISCORD_WEBHOOK:
         required: true
-      GITHUB_TOKEN:
-        required: true
 
 permissions:
   contents: read
@@ -38,7 +36,7 @@ jobs:
       - name: Update PR description
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         id: pr
         run: |
           set +x
@@ -110,7 +108,7 @@ jobs:
 
       - name: Add labels and assignee
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         id: labels
         run: |
