@@ -5,6 +5,11 @@ on:
     branches:
       - "*"
   workflow_call:
+    inputs:
+      target-branch:
+        type: string
+        default: main
+        description: Target branch for PR
     secrets:
       PERSONAL_ACCESS_TOKEN:
         required: true
