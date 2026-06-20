@@ -11,8 +11,6 @@ on:
         default: main
         description: Target branch for PR
     secrets:
-      PERSONAL_ACCESS_TOKEN:
-        required: true
       OPENCODE_API_KEY:
         required: true
       DISCORD_WEBHOOK:
@@ -20,147 +18,81 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   update-commit-message:
-    runs-on: ubuntu-latest
-
+    runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 2
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          persist-credentials: false
+
+      - name: Get commit info
+        id: commit-info
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          CURRENT_MSG=$(git log -1 --pretty=format:"%s")
+          DIFF=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 3000)
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null)
+          FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l)
+
+          echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
+          echo "CURRENT_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
+          echo "DIFF=$DIFF" >> $GITHUB_OUTPUT
+          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "FILE_COUNT=$FILE_COUNT" >> $GITHUB_OUTPUT
 
       - name: Fix commit message
+        id: fix
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          TARGET_BRANCH: ${{ github.ref_name }}
-          REPO_NAME: ${{ github.repository }}
-          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          ACTOR: ${{ github.actor }}
-        id: fix
         run: |
-          echo "========================================"
-          echo "AUTO-COMMIT: Starting commit message fix"
-          echo "========================================"
-          
-          BRANCH="$TARGET_BRANCH"
-          CURRENT_MSG=$(git log -1 --pretty=format:"%s")
-          echo "[DEBUG] Current commit message: '$CURRENT_MSG'"
+          echo "AUTO-COMMIT: Analyzing commit message"
+          echo "Current: ${{ steps.commit-info.outputs.CURRENT_MSG }}"
 
-          if echo "$CURRENT_MSG" | grep -q ':' || echo "$CURRENT_MSG" | grep -q -i '^Merge'; then
-            echo "[DEBUG] Message contains ':' or is a merge - skipping"
+          if echo '${{ steps.commit-info.outputs.CURRENT_MSG }}' | grep -q ':'; then
             echo "status=skipped" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          DIFF=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 2000)
-          echo "[DEBUG] Diff length: ${#DIFF} chars"
+          CHANGED_FILES='${{ steps.commit-info.outputs.CHANGED_FILES }}'
+          FILE_COUNT='${{ steps.commit-info.outputs.FILE_COUNT }}'
+          DIFF_CONTENT='${{ steps.commit-info.outputs.DIFF }}'
 
-          [ -z "$DIFF" ] && echo "[DEBUG] No diff found - skipping" && echo "status=skipped" >> $GITHUB_OUTPUT && exit 0
+          PROMPT="Improve this commit message. Current: ${{ steps.commit-info.outputs.CURRENT_MSG }}. Files ($FILE_COUNT): $CHANGED_FILES. Diff: $DIFF_CONTENT. Output ONLY the new message in format: type(scope) description. Be specific."
 
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null)
-          FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l)
-          echo "[DEBUG] Changed files ($FILE_COUNT): $CHANGED_FILES"
+          RESPONSE=$(curl -s --connect-timeout 30 --max-time 60 \
+            -H "Authorization: Bearer $OPENCODE_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"model\":\"qwen3.7-max\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":100,\"temperature\":0.3}")
 
-          PROMPT="You are a professional commit message generator. Your ONLY output should be a single conventional commit message. RULES: - Output ONLY the commit message. NO introductions, NO explanations, NO greetings, NO apologies. - Format: type(scope) description (72 chars max). Use lowercase for description, no period at end. - Be specific about what actually changed. EXAMPLES OF GOOD OUTPUT: feat(auth) add OAuth2 login support; fix(api) correct response format for users endpoint; refactor(db) extract connection pooling logic; docs(readme) update installation instructions; chore(deps) upgrade express to v4.18.0. EXAMPLES OF BAD OUTPUT (NEVER DO THESE): Hello I would be happy to help you; Here is a good commit message; Sure I would be happy to create a commit message. CHANGED FILES ($FILE_COUNT files): $CHANGED_FILES. DIFF (actual code changes): $DIFF. Generate the commit message now. Only output the commit message, nothing else."
+          NEW_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | sed 's/^[*># ]*//' | cut -c1-72)
 
-          COMMIT_MSG=""
-          for MODEL in qwen3.7-max; do
-            echo "[DEBUG] Calling OpenCode API with model: $MODEL"
-            RESPONSE=$(jq -n \
-              --arg model "$MODEL" \
-              --arg content "$PROMPT" \
-              '{"model":$model,"messages":[{"role":"user","content":$content}],"max_tokens":512,"temperature":0.3}' | \
-              curl -s --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/messages" \
-              -H "Authorization: Bearer $OPENCODE_API_KEY" \
-              -H "Content-Type: application/json" \
-              -H "anthropic-version: 2023-06-01" \
-              -d @-)
-            CURL_EXIT=$?
-            echo "[DEBUG] curl exit code: $CURL_EXIT"
-            echo "[DEBUG] API Response length: ${#RESPONSE} chars"
-            echo "[DEBUG] Raw API Response (first 500 chars): ${RESPONSE:0:500}"
-            
-            [ $CURL_EXIT -ne 0 ] && echo "[DEBUG] curl failed - trying next model" && continue
-
-            COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | sed 's/^[*># ]*//' | cut -c1-72)
-            echo "[DEBUG] Extracted commit message: '$COMMIT_MSG'"
-            
-            [ -z "$COMMIT_MSG" ] || [ "$COMMIT_MSG" = "null" ] && echo "[DEBUG] Empty/null response - trying next model" && continue
-
-            if echo "$COMMIT_MSG" | grep -qi "^Hello\|^I would\|^Here is\|^Sure\|^Great\|^Thanks\|^Absolutely"; then
-              echo "[DEBUG] AI greeting detected - trying next model"
-              continue
-            fi
-
-            echo "[DEBUG] Valid commit message received: '$COMMIT_MSG'"
-            break
-          done
-
-          echo "========================================"
-          echo "[DEBUG] Final COMMIT_MSG: '$COMMIT_MSG'"
-          echo "========================================"
-
-          if [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && [ "$COMMIT_MSG" != "" ]; then
-            set +e
-            OLD_MSG="$CURRENT_MSG"
-            echo "[DEBUG] About to amend commit from '$OLD_MSG' to '$COMMIT_MSG'"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git commit --amend -m "$COMMIT_MSG" --no-verify
-            AMEND_EXIT=$?
-            echo "[DEBUG] git amend exit code: $AMEND_EXIT"
-            git push --force-with-lease origin $BRANCH
-            PUSH_EXIT=$?
-            echo "[DEBUG] git push exit code: $PUSH_EXIT"
-            set -e
-
-            if [ $AMEND_EXIT -eq 0 ] && [ $PUSH_EXIT -eq 0 ]; then
-              echo "[SUCCESS] Commit message amended and pushed successfully!"
-              echo "status=success" >> $GITHUB_OUTPUT
-              echo "old_msg=$OLD_MSG" >> $GITHUB_OUTPUT
-              echo "new_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
-            else
-              echo "[ERROR] Amend or push failed"
-              echo "status=skipped" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "[DEBUG] No valid commit message - skipping"
-            echo "status=skipped" >> $GITHUB_OUTPUT
+          if [ -z "$NEW_MSG" ] || [ "$NEW_MSG" = "null" ]; then
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
           fi
 
+          echo "New: $NEW_MSG"
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "NEW_MSG=$NEW_MSG" >> $GITHUB_OUTPUT
+
+      - name: Apply fix
+        if: steps.fix.outputs.status == 'success'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit --amend -m "${{ steps.fix.outputs.NEW_MSG }}" --no-verify
+          git push --force-with-lease origin ${{ github.ref_name }}
+
       - name: Discord notification
-        if: ${{ steps.fix.outputs.status == 'success' }}
+        if: steps.fix.outputs.status == 'success'
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          REPO_NAME: ${{ github.repository }}
-          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          ACTOR: ${{ github.actor }}
-          OLD_MSG: ${{ steps.fix.outputs.old_msg }}
-          NEW_MSG: ${{ steps.fix.outputs.new_msg }}
-          SHA: ${{ github.sha }}
         run: |
-          COMMIT_LINK="[${SHA:0:7}]($REPO_URL/commit/$SHA)"
-          BRANCH_LINK="[${{ github.ref_name }}]($REPO_URL/tree/${{ github.ref_name }})"
-          AUTHOR_LINK="[$ACTOR](https://github.com/$ACTOR)"
-          REPO_LINK="[$REPO_NAME]($REPO_URL)"
-
-          OLD_MSG_ESC=$(printf '%s' "$OLD_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-200)
-          NEW_MSG_ESC=$(printf '%s' "$NEW_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-200)
-          COMMIT_LINK_ESC=$(printf '%s' "$COMMIT_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
-          BRANCH_LINK_ESC=$(printf '%s' "$BRANCH_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
-          AUTHOR_LINK_ESC=$(printf '%s' "$AUTHOR_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
-          REPO_LINK_ESC=$(printf '%s' "$REPO_LINK" | sed 's/\\/\\\\/g; s/"/\\"/g')
-
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          PAYLOAD="{\"username\":\"AutoCommit Bot\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"embeds\":[{\"title\":\"📝 Commit Message Fixed\",\"url\":\"$RUN_URL\",\"color\":5763719,\"fields\":[{\"name\":\"Repository\",\"value\":\"$REPO_LINK_ESC\",\"inline\":true},{\"name\":\"Branch\",\"value\":\"$BRANCH_LINK_ESC\",\"inline\":true},{\"name\":\"Commit\",\"value\":\"$COMMIT_LINK_ESC\",\"inline\":true},{\"name\":\"Author\",\"value\":\"$AUTHOR_LINK_ESC\",\"inline\":true},{\"name\":\"Before\",\"value\":\"$OLD_MSG_ESC\",\"inline\":false},{\"name\":\"After\",\"value\":\"$NEW_MSG_ESC\",\"inline\":false}],\"footer\":{\"text\":\"GitHub Actions\",\"icon_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\"},\"timestamp\":\"$TIMESTAMP\"}]}"
-
-          curl -sf -X POST "$DISCORD_WEBHOOK" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD" && echo " [Discord] Notification sent" || echo " [Discord] Notification failed"
+          PAYLOAD="{\"username\":\"AutoCommit\",\"embeds\":[{\"title\":\"Commit Fixed\",\"color\":5763719,\"fields\":[{\"name\":\"Before\",\"value\":\"${{ steps.commit-info.outputs.CURRENT_MSG }}\"},{\"name\":\"After\",\"value\":\"${{ steps.fix.outputs.NEW_MSG }}\"}],\"timestamp\":\"$TIMESTAMP\"}]}"
+          curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d "$PAYLOAD"

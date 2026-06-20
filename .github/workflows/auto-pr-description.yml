@@ -10,8 +10,6 @@ on:
         default: main
         description: Target branch for PR
     secrets:
-      PERSONAL_ACCESS_TOKEN:
-        required: true
       OPENCODE_API_KEY:
         required: true
       DISCORD_WEBHOOK:
@@ -20,220 +18,65 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  id-token: write
 
 jobs:
   update-pr:
-    runs-on: ubuntu-latest
-
+    runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          persist-credentials: false
 
-      - name: Update PR description
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
-        id: pr
-        run: |
-          echo "========================================"
-          echo "AUTO-PR: Starting PR description update"
-          echo "========================================"
-          
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          CURRENT_TITLE="${{ github.event.pull_request.title }}"
-          TARGET_BRANCH="${{ inputs.target-branch }}"
-          echo "[DEBUG] PR Number: $PR_NUMBER"
-          echo "[DEBUG] Current title: $CURRENT_TITLE"
-          echo "[DEBUG] Target branch: $TARGET_BRANCH"
-
-          git fetch origin $TARGET_BRANCH:$TARGET_BRANCH 2>/dev/null || true
-          DIFF=$(git diff origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 6000 || echo "")
-          CHANGED_FILES=$(git diff --name-only origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 2000 || echo "")
-          FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l)
-          
-          echo "[DEBUG] Changed files count: $FILE_COUNT"
-          echo "[DEBUG] Changed files: $CHANGED_FILES"
-          echo "[DEBUG] Diff length: ${#DIFF} chars"
-
-          FULL_DIFF=$(echo "$DIFF" | tr '\n' ' ' | tr '\r' ' ' | sed 's/"/'"'"'/g')
-          PROMPT="You are a professional PR description generator. Generate a detailed PR title and description based on the changes below. Current title: $CURRENT_TITLE. CHANGED FILES ($FILE_COUNT files): $CHANGED_FILES. CODE CHANGES: $FULL_DIFF. RULES: Output ONLY title (max 72 chars, no quotes) then newline then description in markdown with sections: Summary, Changes Made, Files Modified. Be specific about WHAT changed and WHY. Output title then newline then description only."
-
-          RESPONSE=""
-          for MODEL in qwen3.7-max; do
-            echo "[DEBUG] Calling OpenCode API for PR with model: $MODEL"
-            RESPONSE=$(jq -n \
-              --arg model "$MODEL" \
-              --arg content "$PROMPT" \
-              '{"model":$model,"messages":[{"role":"user","content":$content}],"max_tokens":4096,"temperature":0.3}' | \
-              curl -s --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/messages" \
-              -H "Authorization: Bearer $OPENCODE_API_KEY" \
-              -H "Content-Type: application/json" \
-              -H "anthropic-version: 2023-06-01" \
-              -d @-)
-            CURL_EXIT=$?
-            echo "[DEBUG] curl exit code: $CURL_EXIT"
-            echo "[DEBUG] API Response length: ${#RESPONSE} chars"
-            echo "[DEBUG] Raw API Response (first 800 chars): ${RESPONSE:0:800}"
-            [ $CURL_EXIT -eq 0 ] && [ -n "$RESPONSE" ] && break
-          done
-
-          PR_CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | sed '/^[*># ]*/s///' | sed '/^Hello\|^I would\|^Here is\|^Sure\|^Great\|^Thanks\|^Absolutely\|^I can\|^I will/d')
-          echo "[DEBUG] Processed PR_CONTENT (first 300 chars): ${PR_CONTENT:0:300}"
-
-          if [ -n "$PR_CONTENT" ] && [ "$PR_CONTENT" != "null" ] && [ ${#PR_CONTENT} -gt 10 ]; then
-            NEW_TITLE=$(echo "$PR_CONTENT" | head -1 | cut -c1-72)
-            NEW_BODY=$(echo "$PR_CONTENT" | tail -n +3 | head -200)
-            echo "[DEBUG] New title: '$NEW_TITLE'"
-            echo "[DEBUG] New body (first 200 chars): '${NEW_BODY:0:200}'"
-
-            PATCH_RESULT=$(curl -sf --connect-timeout 10 --max-time 30 -X PATCH \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER" \
-              -d "$(jq -n --arg t "$NEW_TITLE" --arg b "$NEW_BODY" '{title:$t, body:$b}')")
-            PATCH_EXIT=$?
-            echo "[DEBUG] PATCH exit code: $PATCH_EXIT"
-            
-            if [ $PATCH_EXIT -eq 0 ]; then
-              echo "[SUCCESS] PR description updated successfully!"
-              echo "status=success" >> $GITHUB_OUTPUT
-              echo "title=$NEW_TITLE" >> $GITHUB_OUTPUT
-            else
-              echo "[ERROR] Failed to update PR description"
-              echo "status=skipped" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "[DEBUG] No valid PR content - skipping"
-            echo "status=skipped" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Add labels and assignee
+      - name: Update PR with OpenCode
+        uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        id: labels
+        with:
+          model: opencode/qwen3.7-max
+          prompt: |
+            Review this pull request and perform the following actions:
+
+            1. **Update PR Title and Description**: If the current title or description is not sufficiently descriptive, professional, and informative, improve them. The description should include:
+               - Summary of changes
+               - What was changed and why
+               - Files modified
+               - Any breaking changes or migration notes
+
+            2. **Add Labels**: Based on the code changes, add appropriate labels to categorize this PR. Consider:
+               - Type: feature, bugfix, hotfix, refactor, documentation, ci, testing, dependencies, etc.
+               - Scope: frontend, backend, api, db, etc.
+               - Use file patterns and change types to determine labels
+
+            3. **Assign Reviewers**: Assign JosephRiosHenao as a reviewer for this PR.
+
+            4. **Set Assignee**: Set the PR author as the assignee (owner) of this PR.
+
+            5. **Add Review Comment**: Comment on the PR with:
+               - Potential improvements or optimization suggestions
+               - Any important security considerations or potential vulnerabilities found
+               - Code quality observations
+               - Suggestions for testing
+
+            Be thorough and professional in your review. Make sure all actions are beneficial for the codebase quality.
+
+      - name: Get PR info for Discord
+        id: pr-info
         run: |
-          echo "========================================"
-          echo "AUTO-PR: Starting labels and assignee"
-          echo "========================================"
-          
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
-          TARGET_BRANCH="${{ inputs.target-branch }}"
-          echo "[DEBUG] PR Number: $PR_NUMBER"
-          echo "[DEBUG] PR Author: $PR_AUTHOR"
-
-          FILES=$(curl -sf --connect-timeout 10 --max-time 15 -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/files" | jq -r '.[].filename')
-          echo "[DEBUG] Files from PR: $FILES"
-
-          git fetch origin $TARGET_BRANCH:$TARGET_BRANCH 2>/dev/null || true
-          DIFF=$(git diff origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 3000 || echo "")
-
-          LABEL_PROMPT="Analyze this PR code changes and suggest exactly 3-5 GitHub labels. Available labels: bug, enhancement, feature, documentation, ci, testing, dependencies, refactor, security, performance, breaking-change, hotfix, backend, frontend, mobile, devops, configuration, chore, design, api. Output ONLY the labels as comma-separated values, NO explanations, NO additional text. Example output: feature,backend,api"
-
-          LABEL_RESPONSE=""
-          for MODEL in qwen3.7-max; do
-            echo "[DEBUG] Calling OpenCode API for labels with model: $MODEL"
-            LABEL_RESPONSE=$(jq -n \
-              --arg model "$MODEL" \
-              --arg content "$LABEL_PROMPT" \
-              '{"model":$model,"messages":[{"role":"user","content":$content}],"max_tokens":100,"temperature":0.1}' | \
-              curl -s --connect-timeout 15 --max-time 45 -X POST "https://opencode.ai/zen/v1/messages" \
-              -H "Authorization: Bearer $OPENCODE_API_KEY" \
-              -H "Content-Type: application/json" \
-              -H "anthropic-version: 2023-06-01" \
-              -d @-)
-            CURL_EXIT=$?
-            echo "[DEBUG] curl exit code: $CURL_EXIT"
-            echo "[DEBUG] Label API Response length: ${#LABEL_RESPONSE} chars"
-            echo "[DEBUG] Raw Label API Response: $LABEL_RESPONSE"
-            [ $CURL_EXIT -eq 0 ] && [ -n "$LABEL_RESPONSE" ] && break
-          done
-
-          LABEL_SUGGESTION=""
-          if echo "$LABEL_RESPONSE" | jq -e '.choices[0].message.content' >/dev/null 2>&1; then
-            LABEL_SUGGESTION=$(echo "$LABEL_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | tr -d ' ' | sed 's/,/, /g' | cut -c1-100)
-            echo "[DEBUG] LABEL_SUGGESTION from AI: $LABEL_SUGGESTION"
-          else
-            echo "[DEBUG] LABEL_RESPONSE invalid JSON or missing content"
-          fi
-
-          FILE_BASED_LABELS=""
-          if [ -n "$FILES" ]; then
-            FILE_BASED_LABELS=$(echo "$FILES" | jq -r '
-              [., inputs] |
-              if any(.[]; test("\\.github/workflows/")) then "ci" else empty end,
-              if any(.[]; test("\\.(py|js|ts|go|java|cs|rb|php|swift|kotlin)$")) then "code" else empty end,
-              if any(.[]; test("(README|docs/|\\.md$)")) then "documentation" else empty end,
-              if any(.[]; test("(test|spec|__tests__)")) then "testing" else empty end,
-              if any(.[]; test("(requirements|package\\.json|go\\.mod|go\\.sum|Cargo\\.toml|pom\\.xml|build\\.gradle|Dockerfile)")) then "dependencies" else empty end,
-              if any(.[]; test("\\.(yml|yaml|toml|ini|conf|config)$")) then "configuration" else empty end,
-              if any(.[]; test("\\.(css|scss|less|html|vue|jsx|tsx)$")) then "frontend" else empty end,
-              if any(.[]; test("(api|routes|endpoints|controller)")) then "api" else empty end
-            ' | grep -v "^$" | sort -u | paste -sd, -) || FILE_BASED_LABELS=""
-            echo "[DEBUG] FILE_BASED_LABELS: $FILE_BASED_LABELS"
-          else
-            echo "[DEBUG] No files found in PR"
-          fi
-
-          COMBINED_LABELS=$(echo "$LABEL_SUGGESTION,$FILE_BASED_LABELS" | tr ',' '\n' | grep -v "^$" | sort -u | head -5 | paste -sd, -) || COMBINED_LABELS=""
-          echo "[DEBUG] COMBINED_LABELS: $COMBINED_LABELS"
-
-          LABEL_EXIT=0
-          if [ -n "$COMBINED_LABELS" ]; then
-            echo "[DEBUG] Adding labels: $COMBINED_LABELS"
-            LABEL_RESULT=$(curl -sf --connect-timeout 10 --max-time 15 -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/labels" \
-              -d "$(jq -n --arg l "$COMBINED_LABELS" '{labels:($l | split(","))}')")
-            LABEL_EXIT=$?
-            echo "[DEBUG] Labels API exit code: $LABEL_EXIT"
-          else
-            echo "[DEBUG] No labels to add"
-          fi
-
-          if [ "$PR_AUTHOR" != "JosephRiosHenao" ]; then
-            echo "[DEBUG] Requesting review from JosephRiosHenao"
-            curl -sf --connect-timeout 10 --max-time 15 -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/requested_reviewers" \
-              -d '{"reviewers":["JosephRiosHenao"]}'
-          fi
-
-          echo "[DEBUG] Adding assignee: $PR_AUTHOR"
-          ASSIGNEE_EXIT=0
-          ASSIGNEE_RESULT=$(curl -sf --connect-timeout 10 --max-time 15 -X POST \
-            -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/assignees" \
-            -d "$(jq -n --arg u "$PR_AUTHOR" '{assignees:[$u]}')") || ASSIGNEE_EXIT=$?
-          echo "[DEBUG] Assignee API exit code: $ASSIGNEE_EXIT"
-          
-          echo "[SUCCESS] Labels and assignee processing complete!"
-          echo "labels=$COMBINED_LABELS" >> $GITHUB_OUTPUT
-          echo "assignee=$PR_AUTHOR" >> $GITHUB_OUTPUT
+          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          echo "PR_TITLE=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          echo "PR_URL=${{ github.event.pull_request.html_url }}" >> $GITHUB_OUTPUT
+          echo "AUTHOR=${{ github.event.pull_request.user.login }}" >> $GITHUB_OUTPUT
 
       - name: Discord notification
-        if: ${{ steps.pr.outputs.status == 'success' }}
-        uses: SmartCivita/github-actions-shared/.github/actions/discord-notify@main
-        with:
-          title: "PR Updated"
-          color: "5763719"
-          description: ""
-          url: "${{ github.event.pull_request.html_url }}"
-          event-type: pr
-          old-msg: "${{ github.event.pull_request.title }}"
-          new-msg: "${{ steps.pr.outputs.title }}"
-          commit-sha: "${{ github.sha }}"
-          pr-number: "${{ github.event.pull_request.number }}"
-          status: success
-          run-url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          REPO_NAME: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          PAYLOAD="{\"username\":\"AutoPR Bot\",\"embeds\":[{\"title\":\"PR Reviewed\",\"url\":\"${{ github.event.pull_request.html_url }}\",\"color\":5763719,\"fields\":[{\"name\":\"PR\",\"value\":\"#${{ github.event.pull_request.number }}\"},{\"name\":\"Author\",\"value\":\"${{ github.event.pull_request.user.login }}\"}],\"timestamp\":\"$TIMESTAMP\"}]}"
+          curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d "$PAYLOAD"
