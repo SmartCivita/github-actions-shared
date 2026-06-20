@@ -64,7 +64,7 @@ jobs:
           RESPONSE=""
           API_ERROR=""
 
-          for MODEL in opencode-go/Qwen3.7-Max; do
+          for MODEL in qwen3.6-plus; do
             echo "Calling API with model: $MODEL"
             RESPONSE=$(curl -sf --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
@@ -133,7 +133,7 @@ jobs:
           LABEL_PROMPT="Analyze this PR diff and suggest GitHub labels. Output ONLY comma-separated labels from this list: bug, enhancement, feature, documentation, ci, testing, dependencies, refactor, security, performance, breaking-change, hotfix, backend, frontend, mobile, devops, configuration, chore, design, api. Rules: - Output ONLY labels as comma-separated values, NO explanations. - If no clear match output: chore. - Match based on actual code changes not just file names. - Maximum 4 labels. DIFF: $DIFF"
 
           LABEL_RESPONSE=""
-          for MODEL in opencode-go/Qwen3.7-Max; do
+          for MODEL in qwen3.6-plus; do
             LABEL_RESPONSE=$(curl -sf --connect-timeout 15 --max-time 45 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \

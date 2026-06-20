@@ -67,7 +67,7 @@ jobs:
 
           COMMIT_MSG=""
 
-          for MODEL in opencode-go/Qwen3.7-Max; do
+          for MODEL in qwen3.6-plus; do
             RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
