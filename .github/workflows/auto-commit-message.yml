@@ -43,16 +43,11 @@ jobs:
           ACTOR: ${{ github.actor }}
         id: fix
         run: |
-          echo "::add-mask::$OPENCODE_API_KEY"
-
           BRANCH="$TARGET_BRANCH"
-          echo "Processing commit on branch: $BRANCH"
-
           CURRENT_MSG=$(git log -1 --pretty=format:"%s")
 
           if echo "$CURRENT_MSG" | grep -q ':' || echo "$CURRENT_MSG" | grep -q -i '^Merge'; then
             echo "status=skipped" >> $GITHUB_OUTPUT
-            echo "Skipping: message already follows conventional commits or is a merge"
             exit 0
           fi
 
@@ -66,18 +61,20 @@ jobs:
           PROMPT="You are a professional commit message generator. Your ONLY output should be a single conventional commit message. RULES: - Output ONLY the commit message. NO introductions, NO explanations, NO greetings, NO apologies. - Format: type(scope) description (72 chars max). Use lowercase for description, no period at end. - Be specific about what actually changed. EXAMPLES OF GOOD OUTPUT: feat(auth) add OAuth2 login support; fix(api) correct response format for users endpoint; refactor(db) extract connection pooling logic; docs(readme) update installation instructions; chore(deps) upgrade express to v4.18.0. EXAMPLES OF BAD OUTPUT (NEVER DO THESE): Hello I would be happy to help you; Here is a good commit message; Sure I would be happy to create a commit message. CHANGED FILES ($FILE_COUNT files): $CHANGED_FILES. DIFF (actual code changes): $DIFF. Generate the commit message now. Only output the commit message, nothing else."
 
           COMMIT_MSG=""
-
-          for MODEL in deepseek-v4-flash-free; do
-            RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
+          for MODEL in mimo-v2.5-free; do
+            RESPONSE=$(jq -n \
+              --arg model "$MODEL" \
+              --arg content "$PROMPT" \
+              '{"model":$model,"messages":[{"role":"user","content":$content}],"max_tokens":512,"temperature":0.3}' | \
+              curl -s --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
-                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:512, temperature:0.3}')") || continue
+              -d @-)
+            [ $? -ne 0 ] && continue
 
             COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | sed 's/^[*># ]*//' | cut -c1-72) || continue
 
             if echo "$COMMIT_MSG" | grep -qi "^Hello\|^I would\|^Here is\|^Sure\|^Great\|^Thanks\|^Absolutely"; then
-              echo "Skipping: model returned conversational text"
               continue
             fi
 
