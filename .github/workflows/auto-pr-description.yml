@@ -113,7 +113,10 @@ jobs:
             [ $? -eq 0 ] && [ -n "$LABEL_RESPONSE" ] && break
           done
 
-          LABEL_SUGGESTION=$(echo "$LABEL_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | tr -d ' ' | sed 's/,/, /g' | cut -c1-100) || LABEL_SUGGESTION=""
+          LABEL_SUGGESTION=""
+          if echo "$LABEL_RESPONSE" | jq -e '.choices[0].message.content' >/dev/null 2>&1; then
+            LABEL_SUGGESTION=$(echo "$LABEL_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | tr -d ' ' | sed 's/,/, /g' | cut -c1-100)
+          fi
 
           FILE_BASED_LABELS=$(echo "$FILES" | jq -r '
             [., inputs] |
