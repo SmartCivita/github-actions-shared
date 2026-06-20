@@ -63,7 +63,7 @@ jobs:
           PROMPT="You are a professional PR description generator. Generate a detailed PR title and description based on the changes below. Current title: $CURRENT_TITLE. CHANGED FILES ($FILE_COUNT files): $CHANGED_FILES. CODE CHANGES: $FULL_DIFF. RULES: Output ONLY title (max 72 chars, no quotes) then newline then description in markdown with sections: Summary, Changes Made, Files Modified. Be specific about WHAT changed and WHY. Output title then newline then description only."
 
           RESPONSE=""
-          for MODEL in qwen3.6-plus; do
+          for MODEL in mimo-v2.5-free qwen3.6-plus; do
             echo "[DEBUG] Calling OpenCode API for PR with model: $MODEL"
             RESPONSE=$(jq -n \
               --arg model "$MODEL" \
@@ -137,7 +137,7 @@ jobs:
           LABEL_PROMPT="Analyze this PR code changes and suggest exactly 3-5 GitHub labels. Available labels: bug, enhancement, feature, documentation, ci, testing, dependencies, refactor, security, performance, breaking-change, hotfix, backend, frontend, mobile, devops, configuration, chore, design, api. Output ONLY the labels as comma-separated values, NO explanations, NO additional text. Example output: feature,backend,api"
 
           LABEL_RESPONSE=""
-          for MODEL in qwen3.6-plus; do
+          for MODEL in mimo-v2.5-free qwen3.6-plus; do
             echo "[DEBUG] Calling OpenCode API for labels with model: $MODEL"
             LABEL_RESPONSE=$(jq -n \
               --arg model "$MODEL" \

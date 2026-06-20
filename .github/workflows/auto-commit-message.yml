@@ -69,7 +69,7 @@ jobs:
           PROMPT="You are a professional commit message generator. Your ONLY output should be a single conventional commit message. RULES: - Output ONLY the commit message. NO introductions, NO explanations, NO greetings, NO apologies. - Format: type(scope) description (72 chars max). Use lowercase for description, no period at end. - Be specific about what actually changed. EXAMPLES OF GOOD OUTPUT: feat(auth) add OAuth2 login support; fix(api) correct response format for users endpoint; refactor(db) extract connection pooling logic; docs(readme) update installation instructions; chore(deps) upgrade express to v4.18.0. EXAMPLES OF BAD OUTPUT (NEVER DO THESE): Hello I would be happy to help you; Here is a good commit message; Sure I would be happy to create a commit message. CHANGED FILES ($FILE_COUNT files): $CHANGED_FILES. DIFF (actual code changes): $DIFF. Generate the commit message now. Only output the commit message, nothing else."
 
           COMMIT_MSG=""
-          for MODEL in qwen3.6-plus; do
+          for MODEL in mimo-v2.5-free qwen3.6-plus; do
             echo "[DEBUG] Calling OpenCode API with model: $MODEL"
             RESPONSE=$(jq -n \
               --arg model "$MODEL" \
