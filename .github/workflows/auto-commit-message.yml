@@ -55,18 +55,47 @@ jobs:
 
           [ -z "$DIFF" ] && echo "status=skipped" >> $GITHUB_OUTPUT && exit 0
 
-          PROMPT="Respond in English only. Conventional commit message for this diff. Format: type(scope): description. Diff: $DIFF"
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null)
+          FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l)
+          
+          PROMPT="You are a professional commit message generator. Your ONLY output should be a single conventional commit message.
+RULES:
+- Output ONLY the commit message. NO introductions, NO explanations, NO greetings, NO apologies.
+- Format: type(scope): description (72 chars max)
+- Use lowercase for description, no period at end
+- Be specific about what actually changed
+EXAMPLES OF GOOD OUTPUT:
+- feat(auth): add OAuth2 login support
+- fix(api): correct response format for /users endpoint
+- refactor(db): extract connection pooling logic
+- docs(readme): update installation instructions
+- chore(deps): upgrade express to v4.18.0
+EXAMPLES OF BAD OUTPUT (NEVER DO THESE):
+- Hello! I'd be happy to help you with that commit message!
+- Here's a good commit message for your changes:
+- Sure, I'd be happy to create a commit message for you!
+- Great question! Your commit message should be...
+CHANGED FILES ($FILE_COUNT files):
+$CHANGED_FILES
+DIFF (actual code changes):
+$DIFF
+Generate the commit message now. Only output the commit message, nothing else."
 
           COMMIT_MSG=""
 
-          for MODEL in mimo-v2.5-free nemotron-3-super-free; do
+          for MODEL in opencode-go/Qwen3.7-Max; do
             RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
               -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
                 '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:512, temperature:0.3}')") || continue
 
-            COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | cut -c1-72) || continue
+            COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | sed 's/^[*># ]*//' | cut -c1-72) || continue
+
+            if echo "$COMMIT_MSG" | grep -qi "^Hello\|^Hi \|^Sure\|^Of course\|^I'd be happy\|^I'd love\|^Great\|^Nice\|^Thanks\|^Thank you\|^Happy\|^Absolutely"; then
+              echo "Skipping: model returned conversational text"
+              continue
+            fi
 
             [ -n "$COMMIT_MSG" ] && [ "$COMMIT_MSG" != "null" ] && break
           done
