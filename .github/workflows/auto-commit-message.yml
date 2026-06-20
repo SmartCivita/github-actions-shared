@@ -57,29 +57,8 @@ jobs:
 
           CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null)
           FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l)
-          
-          PROMPT="You are a professional commit message generator. Your ONLY output should be a single conventional commit message.
-RULES:
-- Output ONLY the commit message. NO introductions, NO explanations, NO greetings, NO apologies.
-- Format: type(scope): description (72 chars max)
-- Use lowercase for description, no period at end
-- Be specific about what actually changed
-EXAMPLES OF GOOD OUTPUT:
-- feat(auth): add OAuth2 login support
-- fix(api): correct response format for /users endpoint
-- refactor(db): extract connection pooling logic
-- docs(readme): update installation instructions
-- chore(deps): upgrade express to v4.18.0
-EXAMPLES OF BAD OUTPUT (NEVER DO THESE):
-- Hello! I'd be happy to help you with that commit message!
-- Here's a good commit message for your changes:
-- Sure, I'd be happy to create a commit message for you!
-- Great question! Your commit message should be...
-CHANGED FILES ($FILE_COUNT files):
-$CHANGED_FILES
-DIFF (actual code changes):
-$DIFF
-Generate the commit message now. Only output the commit message, nothing else."
+
+          PROMPT="You are a professional commit message generator. Your ONLY output should be a single conventional commit message. RULES: - Output ONLY the commit message. NO introductions, NO explanations, NO greetings, NO apologies. - Format: type(scope) description (72 chars max). Use lowercase for description, no period at end. - Be specific about what actually changed. EXAMPLES OF GOOD OUTPUT: feat(auth) add OAuth2 login support; fix(api) correct response format for users endpoint; refactor(db) extract connection pooling logic; docs(readme) update installation instructions; chore(deps) upgrade express to v4.18.0. EXAMPLES OF BAD OUTPUT (NEVER DO THESE): Hello I would be happy to help you; Here is a good commit message; Sure I would be happy to create a commit message. CHANGED FILES ($FILE_COUNT files): $CHANGED_FILES. DIFF (actual code changes): $DIFF. Generate the commit message now. Only output the commit message, nothing else."
 
           COMMIT_MSG=""
 
@@ -92,7 +71,7 @@ Generate the commit message now. Only output the commit message, nothing else."
 
             COMMIT_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | sed 's/^[*># ]*//' | cut -c1-72) || continue
 
-            if echo "$COMMIT_MSG" | grep -qi "^Hello\|^Hi \|^Sure\|^Of course\|^I'd be happy\|^I'd love\|^Great\|^Nice\|^Thanks\|^Thank you\|^Happy\|^Absolutely"; then
+            if echo "$COMMIT_MSG" | grep -qi "^Hello\|^I would\|^Here is\|^Sure\|^Great\|^Thanks\|^Absolutely"; then
               echo "Skipping: model returned conversational text"
               continue
             fi
