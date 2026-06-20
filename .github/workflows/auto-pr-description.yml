@@ -57,7 +57,8 @@ jobs:
 
           echo "Diff length: ${#DIFF}, Files: $CHANGED_FILES"
 
-          PROMPT="You are a professional PR description generator. Your ONLY output should be a properly formatted PR title and description. RULES: - Output ONLY the PR title and description. NO introductions, NO explanations, NO greetings, NO apologies, NO signatures. - Title: max 72 chars, clear and specific - Description: Markdown format, include sections. Be specific about WHAT changed and WHY. FORMAT: Title line (72 chars max, no quotes) then blank line then Description (markdown, multiple lines allowed). EXAMPLES OF GOOD OUTPUT: Title: feat(auth) add JWT refresh token rotation. Then a blank line. Then Description in markdown with sections. EXAMPLES OF BAD OUTPUT (NEVER DO THESE): Hello I would be happy to help you with that PR description; Here is a great PR description for your changes; Sure let me create a professional PR description. CURRENT PR TITLE: $CURRENT_TITLE. CHANGED FILES: $CHANGED_FILES. DIFF STATS: plus $ADDITIONS minus $DELETIONS lines. DIFF (actual code changes): $DIFF. Generate the PR title and description now. Only output the title and description, nothing else."
+          SHORT_DIFF=$(echo "$DIFF" | cut -c1-2000)
+          PROMPT="Generate a PR title and description. Title max 72 chars. Description in markdown. Current title: $CURRENT_TITLE. Files: $CHANGED_FILES. Diff preview: $SHORT_DIFF. Output only title then newline then description, nothing else."
 
           RESPONSE=""
           API_ERROR=""
