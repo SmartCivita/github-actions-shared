@@ -63,16 +63,17 @@ jobs:
           RESPONSE=""
           API_ERROR=""
 
-          for MODEL in qwen3.6-plus-free qwen3.5-plus; do
+          for MODEL in qwen3.6-plus-free; do
             echo "Calling API with model: $MODEL"
+            JSON_DATA="{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":2048,\"temperature\":0.3}"
             RESPONSE=$(curl -s --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":2048,\"temperature\":0.3}")
+              --data-raw "$JSON_DATA")
             CURL_CODE=$?
             echo "CURL exit code: $CURL_CODE"
             echo "RESPONSE length: ${#RESPONSE}"
-            echo "RESPONSE preview: ${RESPONSE:0:500}"
+            echo "RESPONSE preview: $RESPONSE"
             if [ $CURL_CODE -eq 0 ] && [ ${#RESPONSE} -gt 0 ]; then
               break
             fi
