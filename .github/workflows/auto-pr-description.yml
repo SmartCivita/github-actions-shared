@@ -16,6 +16,8 @@ on:
         required: true
       DISCORD_WEBHOOK:
         required: true
+      GITHUB_TOKEN:
+        required: true
 
 permissions:
   contents: read
@@ -36,6 +38,7 @@ jobs:
       - name: Update PR description
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         id: pr
         run: |
           echo "::add-mask::$OPENCODE_API_KEY"
@@ -71,11 +74,12 @@ jobs:
             NEW_TITLE=$(echo "$PR_CONTENT" | head -1 | cut -c1-72)
             NEW_BODY=$(echo "$PR_CONTENT" | tail -n +3 | head -200)
 
-            curl -sf --connect-timeout 10 --max-time 30 -X PATCH \
-              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            RESP=$(curl -sf --connect-timeout 10 --max-time 30 -X PATCH \
+              -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER" \
-              -d "$(jq -n --arg t "$NEW_TITLE" --arg b "$NEW_BODY" '{title:$t, body:$b}')"
+              -d "$(jq -n --arg t "$NEW_TITLE" --arg b "$NEW_BODY" '{title:$t, body:$b}')")
+            echo "PATCH response: $RESP"
 
             echo "status=success" >> $GITHUB_OUTPUT
             echo "title=$NEW_TITLE" >> $GITHUB_OUTPUT
@@ -96,6 +100,8 @@ jobs:
           FILES=$(curl -sf --connect-timeout 10 --max-time 15 -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/files" | jq -r '.[].filename')
+
+          echo "Retrieved files for PR#$PR_NUMBER"
 
           DIFF=$(git diff origin/$TARGET_BRANCH...HEAD 2>/dev/null | head -c 3000 || echo "")
 
