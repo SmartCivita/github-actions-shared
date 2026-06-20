@@ -68,12 +68,15 @@ jobs:
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
               -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
-                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:4096, temperature:0.3}')") || API_ERROR=$?
-            echo "API call completed with code: $?"
-            [ -n "$RESPONSE" ] && break
+                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:4096, temperature:0.3}')") 2>&1 || API_ERROR=$?
+            CURL_CODE=$?
+            echo "CURL exit code: $CURL_CODE"
+            echo "Response length: ${#RESPONSE}"
+            echo "Response preview: ${RESPONSE:0:500}"
+            if [ $CURL_CODE -eq 0 ] && [ ${#RESPONSE} -gt 0 ]; then
+              break
+            fi
           done
-
-          echo "Response length: ${#RESPONSE}"
           echo "Response preview: ${RESPONSE:0:200}"
 
           if [ -z "$RESPONSE" ] || [ "$RESPONSE" = "null" ]; then
@@ -136,7 +139,8 @@ jobs:
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
               -d "$(jq -n --arg prompt "$LABEL_PROMPT" --arg model "$MODEL" \
-                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:100, temperature:0.1}')") || echo "Label API failed"
+                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:100, temperature:0.1}')") 2>&1 || echo "Label API failed: $?"
+            echo "Label response length: ${#LABEL_RESPONSE}, preview: ${LABEL_RESPONSE:0:200}"
             [ -n "$LABEL_RESPONSE" ] && break
           done
 
