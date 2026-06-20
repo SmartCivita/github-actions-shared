@@ -64,16 +64,14 @@ jobs:
 
           for MODEL in qwen3.6-plus; do
             echo "Calling API with model: $MODEL"
-            RAW_RESPONSE=$(curl -v --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
+            RESPONSE=$(curl -s --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":4096,\"temperature\":0.3}" 2>&1)
+              -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":4096,\"temperature\":0.3}")
             CURL_CODE=$?
-            # Extract just the response body from the verbose output
-            RESPONSE=$(echo "$RAW_RESPONSE" | sed -n '/^\{/,/^\}/p' | tr -d '\n' | head -c 10000)
             echo "CURL exit code: $CURL_CODE"
-            echo "RAW_RESPONSE length: ${#RAW_RESPONSE}"
-            echo "RESPONSE extracted: $RESPONSE"
+            echo "RESPONSE length: ${#RESPONSE}"
+            echo "RESPONSE preview: ${RESPONSE:0:500}"
             if [ $CURL_CODE -eq 0 ] && [ ${#RESPONSE} -gt 0 ]; then
               break
             fi
