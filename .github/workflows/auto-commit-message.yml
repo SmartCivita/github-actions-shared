@@ -67,7 +67,7 @@ jobs:
 
           COMMIT_MSG=""
 
-          for MODEL in mimo-v2.5-free; do
+          for MODEL in deepseek-v4-flash-free; do
             RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
