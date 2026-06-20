@@ -63,13 +63,16 @@ jobs:
           RESPONSE=""
           API_ERROR=""
 
-          for MODEL in deepseek-v4-flash-free; do
+          for MODEL in mimo-v2.5-free; do
             echo "Calling API with model: $MODEL"
-            JSON_DATA="{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":2048,\"temperature\":0.3}"
-            RESPONSE=$(curl -s --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
+            RESPONSE=$(jq -n \
+              --arg model "$MODEL" \
+              --arg content "$PROMPT" \
+              '{"model":$model,"messages":[{"role":"user","content":$content}],"max_tokens":2048,"temperature":0.3}' | \
+              curl -s --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
-              --data-raw "$JSON_DATA")
+              -d @-)
             CURL_CODE=$?
             echo "CURL exit code: $CURL_CODE"
             echo "RESPONSE length: ${#RESPONSE}"
