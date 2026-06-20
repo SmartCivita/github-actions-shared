@@ -64,15 +64,20 @@ jobs:
 
           for MODEL in qwen3.6-plus; do
             echo "Calling API with model: $MODEL"
-            RESPONSE=$(curl -sf --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
+            CURL_CMD="curl --connect-timeout 15 --max-time 90 -X POST https://opencode.ai/zen/v1/chat/completions \
+              -H 'Authorization: Bearer $OPENCODE_API_KEY' \
+              -H 'Content-Type: application/json' \
+              -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":4096,\"temperature\":0.3}'"
+            echo "CURL_CMD: $CURL_CMD"
+            RAW_RESPONSE=$(curl -sf --connect-timeout 15 --max-time 90 -X POST "https://opencode.ai/zen/v1/chat/completions" \
               -H "Authorization: Bearer $OPENCODE_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "$(jq -n --arg prompt "$PROMPT" --arg model "$MODEL" \
-                '{model:$model, messages:[{role:"user",content:$prompt}], max_tokens:4096, temperature:0.3}')") 2>&1 || API_ERROR=$?
+              -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":4096,\"temperature\":0.3}")
             CURL_CODE=$?
             echo "CURL exit code: $CURL_CODE"
-            echo "Response length: ${#RESPONSE}"
-            echo "Response preview: ${RESPONSE:0:500}"
+            echo "RAW_RESPONSE length: ${#RAW_RESPONSE}"
+            echo "RAW_RESPONSE: $RAW_RESPONSE"
+            RESPONSE="$RAW_RESPONSE"
             if [ $CURL_CODE -eq 0 ] && [ ${#RESPONSE} -gt 0 ]; then
               break
             fi
