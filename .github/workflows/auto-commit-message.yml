@@ -41,11 +41,13 @@ jobs:
           CURRENT_MSG=$(git log -1 --pretty=format:"%s" | tr '\n' ' ' | sed 's/ $//')
           CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | tr '\n' ',' | sed 's/,$//')
           FILE_COUNT=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l | tr -d ' ')
+          DIFF_CONTENT=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 2000)
 
           echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
           echo "CURRENT_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
           echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
           echo "FILE_COUNT=$FILE_COUNT" >> $GITHUB_OUTPUT
+          echo "DIFF_CONTENT=$DIFF_CONTENT" >> $GITHUB_OUTPUT
 
       - name: Fix commit message
         id: fix
@@ -61,10 +63,26 @@ jobs:
 
           CHANGED_FILES='${{ steps.commit-info.outputs.CHANGED_FILES }}'
           FILE_COUNT='${{ steps.commit-info.outputs.FILE_COUNT }}'
+          DIFF_CONTENT='${{ steps.commit-info.outputs.DIFF_CONTENT }}'
 
-          PROMPT="Create a SHORT conventional commit message. Output ONLY the message. Format: type(scope) description. Max 72 chars. Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert. Current message: $CURRENT_MSG. Changed files ($FILE_COUNT): $CHANGED_FILES"
+          PROMPT_FILE="/tmp/prompt_$$.txt"
+          printf '%s\n' \
+            "Create a SHORT conventional commit message. Output ONLY the message." \
+            "" \
+            "CURRENT MESSAGE: $CURRENT_MSG" \
+            "CHANGED FILES ($FILE_COUNT): $CHANGED_FILES" \
+            "CODE DIFF: $DIFF_CONTENT" \
+            "" \
+            "RULES:" \
+            "- Format: type(scope) description" \
+            "- Max 72 characters" \
+            "- Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert" \
+            "- Description must reflect actual code changes" \
+            "- Output ONLY the commit message" \
+            "- NEVER use backticks" > "$PROMPT_FILE"
 
-          RESPONSE=$(timeout 60 opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null) || RESPONSE=""
+          RESPONSE=$(timeout 60 opencode run --model opencode-go/qwen3.7-max "$(cat "$PROMPT_FILE")" 2>/dev/null) || RESPONSE=""
+          rm -f "$PROMPT_FILE"
 
           NEW_MSG=$(echo "$RESPONSE" | tr -d '`' | sed 's/^[*#>\ ]*//' | head -1 | cut -c1-72 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
@@ -106,8 +124,8 @@ jobs:
           NEW_MSG: ${{ steps.fix.outputs.NEW_MSG }}
         run: |
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          CURRENT_MSG_ESC=$(printf '%s' "$CURRENT_MSG" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' | tr -d '"')
-          NEW_MSG_ESC=$(printf '%s' "$NEW_MSG" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' | tr -d '"')
+          CURRENT_MSG_ESC=$(echo "$CURRENT_MSG" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' | tr -d '\n')
+          NEW_MSG_ESC=$(echo "$NEW_MSG" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' | tr -d '\n')
           PAYLOAD="{\"username\":\"AutoCommit\",\"embeds\":[{\"title\":\"Commit Fixed\",\"color\":5763719,\"fields\":[{\"name\":\"Before\",\"value\":$CURRENT_MSG_ESC},{\"name\":\"After\",\"value\":$NEW_MSG_ESC}],\"timestamp\":\"$TIMESTAMP\"}]}"
           echo "$PAYLOAD" > /tmp/discord_payload.json
           curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d @/tmp/discord_payload.json
