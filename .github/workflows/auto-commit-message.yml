@@ -43,15 +43,16 @@ jobs:
           if echo "$CURRENT_MSG" | grep -qE '^Merge'; then
             echo "IS_MERGE=true" >> $GITHUB_OUTPUT
             PARENT_MSG=$(git log -1 --pretty=format:"%s" HEAD~1 | tr '\n' ' ' | sed 's/ $//')
-            HAS_GRANDPARENT=$(git rev-parse HEAD~2 2>/dev/null && echo "true" || echo "false")
-            if [ "$HAS_GRANDPARENT" = "true" ]; then
+            PARENT_COUNT=$(git rev-list --parents HEAD | tail -1 | awk '{print NF-1}')
+            echo "Parent count: $PARENT_COUNT"
+            if [ "$PARENT_COUNT" -ge 2 ] && git rev-parse HEAD~2 >/dev/null 2>&1; then
               CHANGED_FILES=$(git diff --name-only HEAD~2 HEAD~1 | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~2 HEAD~1 | wc -l | tr -d ' ')
               DIFF_CONTENT=$(git diff HEAD~2 HEAD~1 | head -c 1500 | grep -v '^diff\|^index\|^---\|^+' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-500)
             else
-              CHANGED_FILES=""
-              FILE_COUNT="0"
-              DIFF_CONTENT=""
+              CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
+              FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
+              DIFF_CONTENT=$(git diff HEAD~1 HEAD | head -c 1500 | grep -v '^diff\|^index\|^---\|^+' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-500)
             fi
             echo "CURRENT_MSG=$PARENT_MSG" >> $GITHUB_OUTPUT
             echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
