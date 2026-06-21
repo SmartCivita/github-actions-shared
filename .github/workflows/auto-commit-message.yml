@@ -19,6 +19,8 @@ on:
         required: true
       DISCORD_WEBHOOK:
         required: true
+      PERSONAL_ACCESS_TOKEN:
+        required: true
 
 permissions:
   contents: write
@@ -86,9 +88,12 @@ jobs:
 
       - name: Apply fix
         if: steps.fix.outputs.status == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
           git commit --amend -m "${{ steps.fix.outputs.NEW_MSG }}" --no-verify
           git push --force-with-lease origin ${{ github.ref_name }}
 
