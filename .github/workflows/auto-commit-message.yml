@@ -9,11 +9,9 @@ on:
       target-branch:
         type: string
         default: main
-        description: Target branch for PR
       runner-label:
         type: string
         default: self-hosted
-        description: Runner label to use
     secrets:
       OPENCODE_API_KEY:
         required: true
@@ -41,33 +39,24 @@ jobs:
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
-          echo "=========================================="
-          echo "AUTO-COMMIT: Analyzing all new commits"
-          echo "=========================================="
-
           BRANCH="${{ github.ref_name }}"
-          echo "Branch: $BRANCH"
-
           git remote set-url origin "https://x-access-token:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }}.git"
+          git fetch origin "$BRANCH"
+          REMOTE_SHA=$(git rev-parse origin/$BRANCH)
+          LOCAL_SHA=$(git rev-parse HEAD)
 
-          BEFORE_SHA=$(git rev-parse HEAD~10 2>/dev/null || git rev-parse HEAD~1)
-          AFTER_SHA=$(git rev-parse HEAD)
-
-          echo "Before SHA: $BEFORE_SHA"
-          echo "After SHA: $AFTER_SHA"
-
-          COMMIT_COUNT=$(git log --oneline "$BEFORE_SHA..$AFTER_SHA" 2>/dev/null | wc -l)
-          if [ "$COMMIT_COUNT" -eq 0 ] || [ "$COMMIT_COUNT" -eq 1 ]; then
-            COMMIT_COUNT=$(git log --oneline HEAD~1..HEAD 2>/dev/null | wc -l)
-          fi
-
-          echo "New commits to analyze: $COMMIT_COUNT"
-
-          if [ "$COMMIT_COUNT" -eq 0 ]; then
+          if [ "$REMOTE_SHA" = "$LOCAL_SHA" ]; then
             echo "status=skipped" >> $GITHUB_OUTPUT
-            echo "No new commits to process"
             exit 0
           fi
+
+          COMMITS_AHEAD=$(git log --oneline origin/$BRANCH..HEAD 2>/dev/null | wc -l)
+          if [ "$COMMITS_AHEAD" -eq 0 ]; then
+            echo "status=skipped" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Processing $COMMITS_AHEAD commits..."
 
           declare -a COMMITS_TO_FIX=()
           declare -a OLD_MESSAGES=()
@@ -77,100 +66,84 @@ jobs:
             SHA=$(echo "$line" | awk '{print $1}')
             MSG=$(echo "$line" | sed 's/^[a-f0-9]* //')
 
-            echo "Checking: $SHA - $MSG"
-
-            if ! echo "$MSG" | grep -q ':'; then
-              echo "  -> Needs fixing (no conventional format)"
-              COMMITS_TO_FIX+=("$SHA")
-              OLD_MESSAGES+=("$MSG")
-            else
-              echo "  -> OK (has conventional format)"
-            fi
-          done < <(git log --oneline "$BEFORE_SHA..$AFTER_SHA" 2>/dev/null || git log --oneline HEAD~1..HEAD)
-
-          if [ ${#COMMITS_TO_FIX[@]} -eq 0 ]; then
-            echo "status=skipped" >> $GITHUB_OUTPUT
-            echo "All commits already have conventional format"
-            exit 0
-          fi
-
-          echo ""
-          echo "Commits to fix: ${#COMMITS_TO_FIX[@]}"
-          echo "=========================================="
-          echo "Generating corrected messages..."
-          echo "=========================================="
-
-          for i in "${!COMMITS_TO_FIX[@]}"; do
-            SHA="${COMMITS_TO_FIX[$i]}"
-            OLD_MSG="${OLD_MESSAGES[$i]}"
-
-            CHANGED_FILES=$(git diff --name-only "$SHA^..$SHA" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-            FILE_COUNT=$(git diff --name-only "$SHA^..$SHA" 2>/dev/null | wc -l)
-
-            PROMPT="Improve this commit message. Current: $OLD_MSG. Files ($FILE_COUNT): $CHANGED_FILES. Output ONLY the new message in format: type(scope) description. Be specific."
-
-            echo "Generating for: $OLD_MSG"
-
-            RESPONSE=$(opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null)
-            NEW_MSG=$(echo "$RESPONSE" | sed 's/^[*># ]*//' | head -1 | cut -c1-72)
-
-            if [ -z "$NEW_MSG" ]; then
-              echo "  ERROR: Failed to generate message for $SHA"
+            if echo "$MSG" | grep -qE '^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)[:\(]'; then
               continue
             fi
 
-            echo "  New: $NEW_MSG"
-            NEW_MESSAGES+=("$NEW_MSG")
-          done
+            CHANGED_FILES=$(git diff --name-only "$SHA^..$SHA" 2>/dev/null | tr '\n' ',' | sed 's/,$//' || echo "")
+            FILE_COUNT=$(git diff --name-only "$SHA^..$SHA" 2>/dev/null | wc -l | tr -d ' ' || echo "1")
 
-          if [ ${#NEW_MESSAGES[@]} -eq 0 ]; then
-            echo "status=failed" >> $GITHUB_OUTPUT
-            echo "Failed to generate any corrected messages"
-            exit 1
+            PROMPT="Create a SHORT conventional commit message. Output ONLY the message. Format: type(scope) description. Max 72 chars. Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert. Current message: $MSG. Changed files ($FILE_COUNT): $CHANGED_FILES"
+
+            RESPONSE=$(opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null)
+
+            NEW_MSG=$(echo "$RESPONSE" | tr -d '`' | sed 's/^[*#>\ ]*//' | head -1 | cut -c1-72 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+            if [ -z "$NEW_MSG" ] || [ ${#NEW_MSG} -lt 5 ]; then
+              TYPE=$(echo "$CHANGED_FILES" | cut -d',' -f1 | sed 's/\..*//' | head -c 20)
+              [ -z "$TYPE" ] && TYPE="chore"
+              NEW_MSG="${TYPE}(main) update files"
+            fi
+
+            if ! echo "$NEW_MSG" | grep -qE '^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)'; then
+              TYPE=$(echo "$CHANGED_FILES" | cut -d',' -f1 | sed 's/\..*//' | head -c 20)
+              [ -z "$TYPE" ] && TYPE="chore"
+              NEW_MSG="${TYPE}(main) update files"
+            fi
+
+            if [ "$NEW_MSG" = "$MSG" ]; then
+              TYPE=$(echo "$CHANGED_FILES" | cut -d',' -f1 | sed 's/\..*//' | head -c 20)
+              [ -z "$TYPE" ] && TYPE="chore"
+              NEW_MSG="${TYPE}(main) update files"
+            fi
+
+            COMMITS_TO_FIX+=("$SHA")
+            OLD_MESSAGES+=("$MSG")
+            NEW_MESSAGES+=("$NEW_MSG")
+            echo "Fixed: $MSG -> $NEW_MSG"
+
+          done < <(git log --oneline origin/$BRANCH..HEAD)
+
+          if [ ${#COMMITS_TO_FIX[@]} -eq 0 ]; then
+            echo "status=skipped" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
-          echo ""
-          echo "=========================================="
-          echo "Applying fixes..."
-          echo "=========================================="
+          echo "Fixing ${#COMMITS_TO_FIX[@]} commits..."
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           FIRST_SHA="${COMMITS_TO_FIX[0]}"
-          git reset --soft "$FIRST_SHA^"
+          BASE_SHA=$(git rev-parse "$FIRST_SHA^")
+          git reset --soft "$BASE_SHA"
 
           for i in "${!NEW_MESSAGES[@]}"; do
             NEW_MSG="${NEW_MESSAGES[$i]}"
-            printf -v NEW_MSG_SAFE '%s' "$NEW_MSG"
-            git commit -m "$NEW_MSG_SAFE" --no-verify
-            echo "Committed: $NEW_MSG_SAFE"
+            git commit -m "$NEW_MSG" --no-verify
           done
 
           git push --force-with-lease origin "$BRANCH"
-
-          echo ""
-          echo "=========================================="
-          echo "SUCCESS: Fixed ${#NEW_MESSAGES[@]} commits"
-          echo "=========================================="
 
           echo "status=success" >> $GITHUB_OUTPUT
           echo "fix_count=${#NEW_MESSAGES[@]}" >> $GITHUB_OUTPUT
           echo "commits_fixed=${NEW_MESSAGES[*]}" >> $GITHUB_OUTPUT
 
-      - name: Discord notification
+      - name: Discord notification success
         if: steps.analyze.outputs.status == 'success'
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          FIX_COUNT: ${{ steps.analyze.outputs.fix_count }}
+          COMMITS_FIXED: ${{ steps.analyze.outputs.commits_fixed }}
         run: |
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          FIX_COUNT='${{ steps.analyze.outputs.fix_count }}'
-          COMMITS_FIXED='${{ steps.analyze.outputs.commits_fixed }}'
-
-          python3 -c "import json, os; print(json.dumps({'username': 'AutoCommit', 'embeds': [{'title': 'Commits Fixed', 'color': 5763719, 'fields': [{'name': 'Count', 'value': os.environ.get('FIX_COUNT', '')}, {'name': 'Fixed', 'value': os.environ.get('COMMITS_FIXED', '')}], 'timestamp': os.environ.get('TIMESTAMP', '')}]}))" > /tmp/discord_payload.json
-          curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d @/tmp/discord_payload.json && echo "Discord notification sent" || echo "Discord notification failed"
+          FIX_COUNT_ESC=$(printf '%s' "$FIX_COUNT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
+          COMMITS_FIXED_ESC=$(printf '%s' "$COMMITS_FIXED" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
+          PAYLOAD="{\"username\":\"AutoCommit\",\"embeds\":[{\"title\":\"Commits Fixed\",\"color\":5763719,\"fields\":[{\"name\":\"Count\",\"value\":$FIX_COUNT_ESC},{\"name\":\"Fixed\",\"value\":$COMMITS_FIXED_ESC}],\"timestamp\":\"$TIMESTAMP\"}]}"
+          echo "$PAYLOAD" > /tmp/discord_payload.json
+          curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d @/tmp/discord_payload.json
 
       - name: Discord notification skipped
         if: steps.analyze.outputs.status == 'skipped'
         run: |
-          echo "No commits needed fixing - skipping notification"
+          echo "No commits needed fixing"
