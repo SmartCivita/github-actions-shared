@@ -41,8 +41,9 @@ jobs:
         run: |
           BRANCH="${{ github.ref_name }}"
           git remote set-url origin "https://x-access-token:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }}.git"
-          git fetch origin "$BRANCH"
-          REMOTE_SHA=$(git rev-parse origin/$BRANCH)
+          echo "Fetching origin/$BRANCH..."
+          timeout 30 git fetch origin "$BRANCH" || echo "Fetch timeout or error"
+          REMOTE_SHA=$(git rev-parse origin/$BRANCH 2>/dev/null || echo "")
           LOCAL_SHA=$(git rev-parse HEAD)
 
           if [ "$REMOTE_SHA" = "$LOCAL_SHA" ]; then
@@ -75,7 +76,7 @@ jobs:
 
             PROMPT="Create a SHORT conventional commit message. Output ONLY the message. Format: type(scope) description. Max 72 chars. Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert. Current message: $MSG. Changed files ($FILE_COUNT): $CHANGED_FILES"
 
-            RESPONSE=$(opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null)
+            RESPONSE=$(timeout 60 opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null) || RESPONSE=""
 
             NEW_MSG=$(echo "$RESPONSE" | tr -d '`' | sed 's/^[*#>\ ]*//' | head -1 | cut -c1-72 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
