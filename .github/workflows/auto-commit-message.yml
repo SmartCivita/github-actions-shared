@@ -54,25 +54,23 @@ jobs:
             PARENT_COUNT=$(git cat-file -p HEAD | grep -c "^parent ")
             echo "DEBUG: Parent count: $PARENT_COUNT"
             if [ "$PARENT_COUNT" -ge 2 ] && git rev-parse HEAD~2 >/dev/null 2>&1; then
-              echo "DEBUG: Using HEAD~2 HEAD~1"
+              echo "DEBUG: Using HEAD~2 HEAD~1 for diff"
               CHANGED_FILES=$(git diff --name-only HEAD~2 HEAD~1 | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~2 HEAD~1 | wc -l | tr -d ' ')
-              FIRST_FILE=$(echo "$CHANGED_FILES" | cut -d',' -f1)
-              if [ -n "$FIRST_FILE" ]; then
-                DIFF_CONTENT=$(cd /tmp && git show HEAD~1:"$FIRST_FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > old_$$.txt; git show HEAD:"$FIRST_FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > new_$$.txt; diff -U0 old_$$.txt new_$$.txt 2>/dev/null | grep -E '^\+[^+]' | head -20 | tr '\n' ' '; rm -f old_$$.txt new_$$.txt)
-              else
-                DIFF_CONTENT=""
-              fi
+              DIFF_CONTENT=""
+              for FILE in $(echo "$CHANGED_FILES" | tr ',' ' '); do
+                DIFF=$(cd /tmp && rm -f old.txt new.txt && git show HEAD~1^:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > old.txt && git show HEAD~1:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > new.txt && diff -U0 old.txt new.txt 2>/dev/null | grep -E '^\+[^+]' | head -10 | tr '\n' ' ' && rm -f old.txt new.txt)
+                DIFF_CONTENT="$DIFF_CONTENT $DIFF"
+              done
             else
               echo "DEBUG: Using HEAD~1 HEAD"
               CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
-              FIRST_FILE=$(echo "$CHANGED_FILES" | cut -d',' -f1)
-              if [ -n "$FIRST_FILE" ]; then
-                DIFF_CONTENT=$(cd /tmp && git show HEAD~1:"$FIRST_FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > old_$.txt; git show HEAD:"$FIRST_FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > new_$.txt; diff -U0 old_$.txt new_$.txt 2>/dev/null | grep -E '^\+[^+]' | head -20 | tr '\n' ' '; rm -f old_$.txt new_$.txt)
-              else
-                DIFF_CONTENT=""
-              fi
+              DIFF_CONTENT=""
+              for FILE in $(echo "$CHANGED_FILES" | tr ',' ' '); do
+                DIFF=$(cd /tmp && rm -f old.txt new.txt && git show HEAD~1:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > old.txt && git show HEAD:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > new.txt && diff -U0 old.txt new.txt 2>/dev/null | grep -E '^\+[^+]' | head -10 | tr '\n' ' ' && rm -f old.txt new.txt)
+                DIFF_CONTENT="$DIFF_CONTENT $DIFF"
+              done
             fi
             echo "CURRENT_MSG=$PARENT_MSG" >> $GITHUB_OUTPUT
           else
@@ -82,12 +80,11 @@ jobs:
               echo "DEBUG: HEAD~1 exists, getting diff"
               CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
-              FIRST_FILE=$(echo "$CHANGED_FILES" | cut -d',' -f1)
-              if [ -n "$FIRST_FILE" ]; then
-                DIFF_CONTENT=$(cd /tmp && git show HEAD~1:"$FIRST_FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > old_$.txt; git show HEAD:"$FIRST_FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > new_$.txt; diff -U0 old_$.txt new_$.txt 2>/dev/null | grep -E '^\+[^+]' | head -20 | tr '\n' ' '; rm -f old_$.txt new_$.txt)
-              else
-                DIFF_CONTENT=""
-              fi
+              DIFF_CONTENT=""
+              for FILE in $(echo "$CHANGED_FILES" | tr ',' ' '); do
+                DIFF=$(cd /tmp && rm -f old.txt new.txt && git show HEAD~1:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > old.txt && git show HEAD:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > new.txt && diff -U0 old.txt new.txt 2>/dev/null | grep -E '^\+[^+]' | head -10 | tr '\n' ' ' && rm -f old.txt new.txt)
+                DIFF_CONTENT="$DIFF_CONTENT $DIFF"
+              done
             else
               echo "DEBUG: HEAD~1 does NOT exist, single commit"
               CHANGED_FILES=""
