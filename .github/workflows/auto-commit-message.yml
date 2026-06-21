@@ -57,7 +57,6 @@ jobs:
           echo "AUTO-COMMIT: Analyzing commit message"
           CURRENT_MSG='${{ steps.commit-info.outputs.CURRENT_MSG }}'
           echo "Current: $CURRENT_MSG"
-          echo "API_KEY length: ${#OPENCODE_API_KEY}"
 
           if echo "$CURRENT_MSG" | grep -q ':'; then
             echo "status=skipped" >> $GITHUB_OUTPUT
@@ -69,18 +68,15 @@ jobs:
 
           PROMPT="Improve this commit message. Current: $CURRENT_MSG. Files ($FILE_COUNT): $CHANGED_FILES. Output ONLY the new message in format: type(scope) description. Be specific."
 
-          echo "Calling OpenCode API..."
+          echo "Calling OpenCode CLI..."
 
-          RESPONSE=$(curl -s --connect-timeout 30 --max-time 60 \
-            -H "Authorization: Bearer $OPENCODE_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"model\":\"qwen3.7-max\",\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":100,\"temperature\":0.3}")
+          RESPONSE=$(opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null)
 
           echo "Response: $RESPONSE"
 
-          NEW_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null | head -1 | sed 's/^[*># ]*//' | cut -c1-72)
+          NEW_MSG=$(echo "$RESPONSE" | sed 's/^[*># ]*//' | head -1 | cut -c1-72)
 
-          if [ -z "$NEW_MSG" ] || [ "$NEW_MSG" = "null" ]; then
+          if [ -z "$NEW_MSG" ]; then
             echo "status=failed" >> $GITHUB_OUTPUT
             exit 1
           fi
