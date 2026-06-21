@@ -40,14 +40,12 @@ jobs:
         id: commit-info
         run: |
           BRANCH="${{ github.ref_name }}"
-          CURRENT_MSG=$(git log -1 --pretty=format:"%s")
+          CURRENT_MSG=$(git log -1 --pretty=format:"%s" | tr '\n' ' ' | sed 's/ $//')
           CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | tr '\n' ',' | sed 's/,$//')
           FILE_COUNT=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l)
 
           echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
-          echo "CURRENT_MSG<<EOF" >> $GITHUB_OUTPUT
-          echo "$CURRENT_MSG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "CURRENT_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
           echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
           echo "FILE_COUNT=$FILE_COUNT" >> $GITHUB_OUTPUT
 
@@ -57,9 +55,10 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           echo "AUTO-COMMIT: Analyzing commit message"
-          echo "Current: ${{ steps.commit-info.outputs.CURRENT_MSG }}"
+          CURRENT_MSG='${{ steps.commit-info.outputs.CURRENT_MSG }}'
+          echo "Current: $CURRENT_MSG"
 
-          if echo '${{ steps.commit-info.outputs.CURRENT_MSG }}' | grep -q ':'; then
+          if echo "$CURRENT_MSG" | grep -q ':'; then
             echo "status=skipped" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -67,7 +66,7 @@ jobs:
           CHANGED_FILES='${{ steps.commit-info.outputs.CHANGED_FILES }}'
           FILE_COUNT='${{ steps.commit-info.outputs.FILE_COUNT }}'
 
-          PROMPT="Improve this commit message. Current: ${{ steps.commit-info.outputs.CURRENT_MSG }}. Files ($FILE_COUNT): $CHANGED_FILES. Output ONLY the new message in format: type(scope) description. Be specific."
+          PROMPT="Improve this commit message. Current: $CURRENT_MSG. Files ($FILE_COUNT): $CHANGED_FILES. Output ONLY the new message in format: type(scope) description. Be specific."
 
           RESPONSE=$(curl -s --connect-timeout 30 --max-time 60 \
             -H "Authorization: Bearer $OPENCODE_API_KEY" \
