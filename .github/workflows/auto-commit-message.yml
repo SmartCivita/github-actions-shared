@@ -139,23 +139,17 @@ jobs:
           if [ "$IS_MERGE" = "true" ]; then
             echo "Fixing parent of merge commit..."
             MERGE_SHA=$(git rev-parse HEAD)
+            git stash push -m "merge changes" >/dev/null 2>&1
             git reset --soft HEAD~1 >/dev/null 2>&1
             git commit --amend -m "$NEW_MSG_SAFE" --no-verify >/dev/null 2>&1
-            echo "Cherry-picking merge commit $MERGE_SHA with -m 1..."
-            if git cherry-pick -m 1 -n "$MERGE_SHA" >/dev/null 2>&1; then
+            if git stash pop >/dev/null 2>&1; then
+              git cherry-pick -m 1 -n "$MERGE_SHA" >/dev/null 2>&1
               MERGE_MSG=$(git log -1 --format="%s" "$MERGE_SHA")
               git commit -m "$MERGE_MSG" --no-verify >/dev/null 2>&1
-              echo "Done: merge commit recreated"
+              echo "Done: parent message fixed, merge recreated"
             else
-              echo "Cherry-pick -m 1 failed, trying without -m..."
-              if git cherry-pick -n "$MERGE_SHA" >/dev/null 2>&1; then
-                MERGE_MSG=$(git log -1 --format="%s" "$MERGE_SHA")
-                git commit -m "$MERGE_MSG" --no-verify >/dev/null 2>&1
-                echo "Done: merge commit recreated"
-              else
-                echo "Cherry-pick failed completely"
-                exit 1
-              fi
+              echo "Stash pop failed"
+              exit 1
             fi
           else
             echo "Amending commit with new message: $NEW_MSG"
