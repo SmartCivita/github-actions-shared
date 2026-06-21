@@ -141,11 +141,12 @@ jobs:
 
           if [ "$IS_MERGE" = "true" ]; then
             echo "Fixing parent of merge commit..."
+            MERGE_SHA=$(git rev-parse HEAD)
             git reset --soft HEAD~1 >/dev/null 2>&1
             git commit --amend -m "$NEW_MSG_SAFE" --no-verify >/dev/null 2>&1
-            echo "Cherry-picking merge commit..."
-            if git cherry-pick -n --strategy=recursive -X theirs HEAD~1 >/dev/null 2>&1; then
-              MERGE_MSG=$(git log -1 --format="%s" HEAD^1)
+            echo "Cherry-picking merge commit $MERGE_SHA..."
+            if git cherry-pick -n --strategy=recursive -X theirs "$MERGE_SHA" >/dev/null 2>&1; then
+              MERGE_MSG=$(git log -1 --format="%s" "$MERGE_SHA")
               git commit -m "$MERGE_MSG" --no-verify >/dev/null 2>&1
               echo "Done: merge commit recreated"
             else
