@@ -46,9 +46,9 @@ jobs:
             exit 0
           fi
 
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
           FILE_COUNT=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l | tr -d ' ')
-          DIFF_CONTENT=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 2000)
+          DIFF_CONTENT=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 1500 | grep -v '^diff\|^index\|^---\|^+' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-500)
 
           echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
           echo "CURRENT_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
