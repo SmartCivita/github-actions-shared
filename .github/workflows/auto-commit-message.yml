@@ -57,12 +57,12 @@ jobs:
               echo "DEBUG: Using HEAD~2 HEAD~1"
               CHANGED_FILES=$(git diff --name-only HEAD~2 HEAD~1 | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~2 HEAD~1 | wc -l | tr -d ' ')
-              DIFF_CONTENT=$(git show HEAD~1 --no-color --patch --text 2>/dev/null | tail -n +5 | head -50 | tr '\n' ' ' | cut -c1-800)
+              DIFF_CONTENT=$(git show HEAD~1 --no-color --patch --text 2>/dev/null | tail -n +5 | head -50 | tr '\n' ' ' | sed 's/[A-Z][a-z]* [A-Z][a-z]* [0-9]* [0-9:]* [-+][0-9]* [0-9]*//g' | cut -c1-800)
             else
               echo "DEBUG: Using HEAD~1 HEAD"
               CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
-              DIFF_CONTENT=$(git show HEAD --no-color --patch --text 2>/dev/null | tail -n +5 | head -50 | tr '\n' ' ' | cut -c1-800)
+              DIFF_CONTENT=$(git show HEAD --no-color --patch --text 2>/dev/null | tail -n +5 | head -50 | tr '\n' ' ' | sed 's/[A-Z][a-z]* [A-Z][a-z]* [0-9]* [0-9:]* [-+][0-9]* [0-9]*//g' | cut -c1-800)
             fi
             echo "CURRENT_MSG=$PARENT_MSG" >> $GITHUB_OUTPUT
           else
@@ -72,7 +72,7 @@ jobs:
               echo "DEBUG: HEAD~1 exists, getting diff"
               CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
-              DIFF_CONTENT=$(git show HEAD --no-color --patch --text 2>/dev/null | tail -n +5 | head -50 | tr '\n' ' ' | cut -c1-800)
+              DIFF_CONTENT=$(git show HEAD --no-color --patch --text 2>/dev/null | tail -n +5 | head -50 | tr '\n' ' ' | sed 's/[A-Z][a-z]* [A-Z][a-z]* [0-9]* [0-9:]* [-+][0-9]* [0-9]*//g' | cut -c1-800)
             else
               echo "DEBUG: HEAD~1 does NOT exist, single commit"
               CHANGED_FILES=""
