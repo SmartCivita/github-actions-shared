@@ -141,12 +141,9 @@ jobs:
 
           if [ "$IS_MERGE" = "true" ]; then
             echo "Fixing parent of merge commit..."
-            PARENT_SHA=$(git rev-parse HEAD^1)
-            echo "Parent SHA: $PARENT_SHA"
-            BASE=$(git merge-base HEAD^1 HEAD^2 2>/dev/null) || BASE="$PARENT_SHA"
-            echo "Base SHA: $BASE"
-            git reset --soft "$BASE"
-            git commit -m "$NEW_MSG_SAFE" --no-verify
+            git reset --soft HEAD~1
+            git commit --amend -m "$NEW_MSG_SAFE" --no-verify
+            git cherry-pick -n --strategy=recursive -X theirs HEAD~1
             MERGE_MSG=$(git log -1 --format="%s" HEAD^1)
             git commit -m "$MERGE_MSG" --no-verify || true
           else
