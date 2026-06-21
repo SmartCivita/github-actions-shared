@@ -41,13 +41,13 @@ jobs:
         run: |
           BRANCH="${{ github.ref_name }}"
           CURRENT_MSG=$(git log -1 --pretty=format:"%s")
-          DIFF=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 3000)
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null)
-          FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l)
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+          FILE_COUNT=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l)
 
           echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
-          echo "CURRENT_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
-          echo "DIFF=$DIFF" >> $GITHUB_OUTPUT
+          echo "CURRENT_MSG<<EOF" >> $GITHUB_OUTPUT
+          echo "$CURRENT_MSG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
           echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
           echo "FILE_COUNT=$FILE_COUNT" >> $GITHUB_OUTPUT
 
@@ -66,9 +66,8 @@ jobs:
 
           CHANGED_FILES='${{ steps.commit-info.outputs.CHANGED_FILES }}'
           FILE_COUNT='${{ steps.commit-info.outputs.FILE_COUNT }}'
-          DIFF_CONTENT='${{ steps.commit-info.outputs.DIFF }}'
 
-          PROMPT="Improve this commit message. Current: ${{ steps.commit-info.outputs.CURRENT_MSG }}. Files ($FILE_COUNT): $CHANGED_FILES. Diff: $DIFF_CONTENT. Output ONLY the new message in format: type(scope) description. Be specific."
+          PROMPT="Improve this commit message. Current: ${{ steps.commit-info.outputs.CURRENT_MSG }}. Files ($FILE_COUNT): $CHANGED_FILES. Output ONLY the new message in format: type(scope) description. Be specific."
 
           RESPONSE=$(curl -s --connect-timeout 30 --max-time 60 \
             -H "Authorization: Bearer $OPENCODE_API_KEY" \
