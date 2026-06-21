@@ -93,7 +93,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
-          git commit --amend -m "${{ steps.fix.outputs.NEW_MSG }}" --no-verify
+
+          NEW_MSG='${{ steps.fix.outputs.NEW_MSG }}'
+          printf -v NEW_MSG_SAFE '%s' "$NEW_MSG"
+
+          git commit --amend -m "$NEW_MSG_SAFE" --no-verify
           git push --force-with-lease origin ${{ github.ref_name }}
 
       - name: Discord notification
