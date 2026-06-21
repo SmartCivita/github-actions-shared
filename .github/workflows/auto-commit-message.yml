@@ -33,80 +33,144 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Get commit info
-        id: commit-info
-        run: |
-          BRANCH="${{ github.ref_name }}"
-          CURRENT_MSG=$(git log -1 --pretty=format:"%s" | tr '\n' ' ' | sed 's/ $//')
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-          FILE_COUNT=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l)
-
-          echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
-          echo "CURRENT_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
-          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
-          echo "FILE_COUNT=$FILE_COUNT" >> $GITHUB_OUTPUT
-
-      - name: Fix commit message
-        id: fix
+      - name: Analyze and fix commits
+        id: analyze
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
-          echo "AUTO-COMMIT: Analyzing commit message"
-          CURRENT_MSG='${{ steps.commit-info.outputs.CURRENT_MSG }}'
-          echo "Current: $CURRENT_MSG"
+          echo "=========================================="
+          echo "AUTO-COMMIT: Analyzing all new commits"
+          echo "=========================================="
 
-          if echo "$CURRENT_MSG" | grep -q ':'; then
+          BRANCH="${{ github.ref_name }}"
+          echo "Branch: $BRANCH"
+
+          git remote set-url origin "https://x-access-token:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }}.git"
+
+          BEFORE_SHA=$(git rev-parse HEAD~10 2>/dev/null || git rev-parse HEAD~1)
+          AFTER_SHA=$(git rev-parse HEAD)
+
+          echo "Before SHA: $BEFORE_SHA"
+          echo "After SHA: $AFTER_SHA"
+
+          COMMIT_COUNT=$(git log --oneline "$BEFORE_SHA..$AFTER_SHA" 2>/dev/null | wc -l)
+          if [ "$COMMIT_COUNT" -eq 0 ] || [ "$COMMIT_COUNT" -eq 1 ]; then
+            COMMIT_COUNT=$(git log --oneline HEAD~1..HEAD 2>/dev/null | wc -l)
+          fi
+
+          echo "New commits to analyze: $COMMIT_COUNT"
+
+          if [ "$COMMIT_COUNT" -eq 0 ]; then
             echo "status=skipped" >> $GITHUB_OUTPUT
+            echo "No new commits to process"
             exit 0
           fi
 
-          CHANGED_FILES='${{ steps.commit-info.outputs.CHANGED_FILES }}'
-          FILE_COUNT='${{ steps.commit-info.outputs.FILE_COUNT }}'
+          declare -a COMMITS_TO_FIX=()
+          declare -a OLD_MESSAGES=()
+          declare -a NEW_MESSAGES=()
 
-          PROMPT="Improve this commit message. Current: $CURRENT_MSG. Files ($FILE_COUNT): $CHANGED_FILES. Output ONLY the new message in format: type(scope) description. Be specific."
+          while IFS= read -r line; do
+            SHA=$(echo "$line" | awk '{print $1}')
+            MSG=$(echo "$line" | sed 's/^[a-f0-9]* //')
 
-          echo "Calling OpenCode CLI..."
+            echo "Checking: $SHA - $MSG"
 
-          RESPONSE=$(opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null)
+            if ! echo "$MSG" | grep -q ':'; then
+              echo "  -> Needs fixing (no conventional format)"
+              COMMITS_TO_FIX+=("$SHA")
+              OLD_MESSAGES+=("$MSG")
+            else
+              echo "  -> OK (has conventional format)"
+            fi
+          done < <(git log --oneline "$BEFORE_SHA..$AFTER_SHA" 2>/dev/null || git log --oneline HEAD~1..HEAD)
 
-          echo "Response: $RESPONSE"
+          if [ ${#COMMITS_TO_FIX[@]} -eq 0 ]; then
+            echo "status=skipped" >> $GITHUB_OUTPUT
+            echo "All commits already have conventional format"
+            exit 0
+          fi
 
-          NEW_MSG=$(echo "$RESPONSE" | sed 's/^[*># ]*//' | head -1 | cut -c1-72)
+          echo ""
+          echo "Commits to fix: ${#COMMITS_TO_FIX[@]}"
+          echo "=========================================="
+          echo "Generating corrected messages..."
+          echo "=========================================="
 
-          if [ -z "$NEW_MSG" ]; then
+          for i in "${!COMMITS_TO_FIX[@]}"; do
+            SHA="${COMMITS_TO_FIX[$i]}"
+            OLD_MSG="${OLD_MESSAGES[$i]}"
+
+            CHANGED_FILES=$(git diff --name-only "$SHA^..$SHA" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+            FILE_COUNT=$(git diff --name-only "$SHA^..$SHA" 2>/dev/null | wc -l)
+
+            PROMPT="Improve this commit message. Current: $OLD_MSG. Files ($FILE_COUNT): $CHANGED_FILES. Output ONLY the new message in format: type(scope) description. Be specific."
+
+            echo "Generating for: $OLD_MSG"
+
+            RESPONSE=$(opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null)
+            NEW_MSG=$(echo "$RESPONSE" | sed 's/^[*># ]*//' | head -1 | cut -c1-72)
+
+            if [ -z "$NEW_MSG" ]; then
+              echo "  ERROR: Failed to generate message for $SHA"
+              continue
+            fi
+
+            echo "  New: $NEW_MSG"
+            NEW_MESSAGES+=("$NEW_MSG")
+          done
+
+          if [ ${#NEW_MESSAGES[@]} -eq 0 ]; then
             echo "status=failed" >> $GITHUB_OUTPUT
+            echo "Failed to generate any corrected messages"
             exit 1
           fi
 
-          echo "New: $NEW_MSG"
-          echo "status=success" >> $GITHUB_OUTPUT
-          echo "NEW_MSG=$NEW_MSG" >> $GITHUB_OUTPUT
+          echo ""
+          echo "=========================================="
+          echo "Applying fixes..."
+          echo "=========================================="
 
-      - name: Apply fix
-        if: steps.fix.outputs.status == 'success'
-        env:
-          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
 
-          NEW_MSG='${{ steps.fix.outputs.NEW_MSG }}'
-          printf -v NEW_MSG_SAFE '%s' "$NEW_MSG"
+          FIRST_SHA="${COMMITS_TO_FIX[0]}"
+          git reset --soft "$FIRST_SHA^"
 
-          git commit --amend -m "$NEW_MSG_SAFE" --no-verify
-          git push --force-with-lease origin ${{ github.ref_name }}
+          for i in "${!NEW_MESSAGES[@]}"; do
+            NEW_MSG="${NEW_MESSAGES[$i]}"
+            printf -v NEW_MSG_SAFE '%s' "$NEW_MSG"
+            git commit -m "$NEW_MSG_SAFE" --no-verify
+            echo "Committed: $NEW_MSG_SAFE"
+          done
+
+          git push --force-with-lease origin "$BRANCH"
+
+          echo ""
+          echo "=========================================="
+          echo "SUCCESS: Fixed ${#NEW_MESSAGES[@]} commits"
+          echo "=========================================="
+
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "fix_count=${#NEW_MESSAGES[@]}" >> $GITHUB_OUTPUT
+          echo "commits_fixed=${NEW_MESSAGES[*]}" >> $GITHUB_OUTPUT
 
       - name: Discord notification
-        if: steps.fix.outputs.status == 'success'
+        if: steps.analyze.outputs.status == 'success'
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          CURRENT_MSG: ${{ steps.commit-info.outputs.CURRENT_MSG }}
-          NEW_MSG: ${{ steps.fix.outputs.NEW_MSG }}
         run: |
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          python3 -c "import json, os; print(json.dumps({'username': 'AutoCommit', 'embeds': [{'title': 'Commit Fixed', 'color': 5763719, 'fields': [{'name': 'Before', 'value': os.environ.get('CURRENT_MSG', '')}, {'name': 'After', 'value': os.environ.get('NEW_MSG', '')}], 'timestamp': os.environ.get('TIMESTAMP', '')}]}))" > /tmp/discord_payload.json
+          FIX_COUNT='${{ steps.analyze.outputs.fix_count }}'
+          COMMITS_FIXED='${{ steps.analyze.outputs.commits_fixed }}'
+
+          python3 -c "import json, os; print(json.dumps({'username': 'AutoCommit', 'embeds': [{'title': 'Commits Fixed', 'color': 5763719, 'fields': [{'name': 'Count', 'value': os.environ.get('FIX_COUNT', '')}, {'name': 'Fixed', 'value': os.environ.get('COMMITS_FIXED', '')}], 'timestamp': os.environ.get('TIMESTAMP', '')}]}))" > /tmp/discord_payload.json
           curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d @/tmp/discord_payload.json && echo "Discord notification sent" || echo "Discord notification failed"
+
+      - name: Discord notification skipped
+        if: steps.analyze.outputs.status == 'skipped'
+        run: |
+          echo "No commits needed fixing - skipping notification"
