@@ -43,7 +43,6 @@ jobs:
           if echo "$CURRENT_MSG" | grep -qE '^Merge'; then
             echo "IS_MERGE=true" >> $GITHUB_OUTPUT
             PARENT_MSG=$(git log -1 --pretty=format:"%s" HEAD~1 | tr '\n' ' ' | sed 's/ $//')
-            PARENT_SHA=$(git rev-parse HEAD~1)
             HAS_GRANDPARENT=$(git rev-parse HEAD~2 2>/dev/null && echo "true" || echo "false")
             if [ "$HAS_GRANDPARENT" = "true" ]; then
               CHANGED_FILES=$(git diff --name-only HEAD~2 HEAD~1 | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
@@ -54,7 +53,6 @@ jobs:
               FILE_COUNT="0"
               DIFF_CONTENT=""
             fi
-            echo "TARGET_COMMIT=$PARENT_SHA" >> $GITHUB_OUTPUT
             echo "CURRENT_MSG=$PARENT_MSG" >> $GITHUB_OUTPUT
             echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
             echo "FILE_COUNT=$FILE_COUNT" >> $GITHUB_OUTPUT
@@ -64,7 +62,6 @@ jobs:
             CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
             FILE_COUNT=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l | tr -d ' ')
             DIFF_CONTENT=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 1500 | grep -v '^diff\|^index\|^---\|^+' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-500)
-            echo "TARGET_COMMIT=HEAD" >> $GITHUB_OUTPUT
             echo "CURRENT_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
             echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
             echo "FILE_COUNT=$FILE_COUNT" >> $GITHUB_OUTPUT
@@ -144,14 +141,21 @@ jobs:
             MERGE_SHA=$(git rev-parse HEAD)
             git reset --soft HEAD~1 >/dev/null 2>&1
             git commit --amend -m "$NEW_MSG_SAFE" --no-verify >/dev/null 2>&1
-            echo "Cherry-picking merge commit $MERGE_SHA..."
-            if git cherry-pick -n --strategy=recursive -X theirs "$MERGE_SHA" >/dev/null 2>&1; then
+            echo "Cherry-picking merge commit $MERGE_SHA with -m 1..."
+            if git cherry-pick -m 1 -n "$MERGE_SHA" >/dev/null 2>&1; then
               MERGE_MSG=$(git log -1 --format="%s" "$MERGE_SHA")
               git commit -m "$MERGE_MSG" --no-verify >/dev/null 2>&1
               echo "Done: merge commit recreated"
             else
-              echo "Cherry-pick failed"
-              exit 1
+              echo "Cherry-pick -m 1 failed, trying without -m..."
+              if git cherry-pick -n "$MERGE_SHA" >/dev/null 2>&1; then
+                MERGE_MSG=$(git log -1 --format="%s" "$MERGE_SHA")
+                git commit -m "$MERGE_MSG" --no-verify >/dev/null 2>&1
+                echo "Done: merge commit recreated"
+              else
+                echo "Cherry-pick failed completely"
+                exit 1
+              fi
             fi
           else
             echo "Amending commit with new message: $NEW_MSG"
