@@ -38,10 +38,27 @@ jobs:
         id: commit-info
         run: |
           BRANCH="${{ github.ref_name }}"
+
           CURRENT_MSG=$(git log -1 --pretty=format:"%s" | tr '\n' ' ' | sed 's/ $//')
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-          FILE_COUNT=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l | tr -d ' ')
-          DIFF_CONTENT=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 2000)
+
+          if echo "$CURRENT_MSG" | grep -qE '^Merge branch'; then
+            echo "Detected merge commit, checking parent..."
+            PARENT_MSG=$(git log -1 --pretty=format:"%s" HEAD~1 | tr '\n' ' ' | sed 's/ $//')
+            PARENT_SHA=$(git rev-parse HEAD~1)
+            echo "Parent message: $PARENT_MSG"
+            echo "Parent SHA: $PARENT_SHA"
+            CHANGED_FILES=$(git diff --name-only HEAD~2 HEAD~1 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+            FILE_COUNT=$(git diff --name-only HEAD~2 HEAD~1 2>/dev/null | wc -l | tr -d ' ')
+            DIFF_CONTENT=$(git diff HEAD~2 HEAD~1 2>/dev/null | head -c 2000)
+            echo "TARGET=parent" >> $GITHUB_OUTPUT
+            echo "TARGET_MSG=$PARENT_MSG" >> $GITHUB_OUTPUT
+          else
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+            FILE_COUNT=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l | tr -d ' ')
+            DIFF_CONTENT=$(git diff HEAD~1 HEAD 2>/dev/null | head -c 2000)
+            echo "TARGET=head" >> $GITHUB_OUTPUT
+            echo "TARGET_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
+          fi
 
           echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
           echo "CURRENT_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
@@ -54,9 +71,10 @@ jobs:
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
+          TARGET_MSG='${{ steps.commit-info.outputs.TARGET_MSG }}'
           CURRENT_MSG='${{ steps.commit-info.outputs.CURRENT_MSG }}'
 
-          if echo "$CURRENT_MSG" | grep -qE '^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)[:\(]'; then
+          if echo "$TARGET_MSG" | grep -qE '^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)[:\(]'; then
             echo "status=skipped" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -69,7 +87,7 @@ jobs:
           printf '%s\n' \
             "Create a SHORT conventional commit message. Output ONLY the message." \
             "" \
-            "CURRENT MESSAGE: $CURRENT_MSG" \
+            "CURRENT MESSAGE: $TARGET_MSG" \
             "CHANGED FILES ($FILE_COUNT): $CHANGED_FILES" \
             "CODE DIFF: $DIFF_CONTENT" \
             "" \
@@ -100,6 +118,7 @@ jobs:
 
           echo "status=success" >> $GITHUB_OUTPUT
           echo "NEW_MSG=$NEW_MSG" >> $GITHUB_OUTPUT
+          echo "TARGET_MSG=$TARGET_MSG" >> $GITHUB_OUTPUT
 
       - name: Apply fix
         if: steps.fix.outputs.status == 'success'
@@ -110,10 +129,27 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
 
+          TARGET='${{ steps.commit-info.outputs.TARGET }}'
+          TARGET_MSG='${{ steps.fix.outputs.TARGET_MSG }}'
           NEW_MSG='${{ steps.fix.outputs.NEW_MSG }}'
           printf -v NEW_MSG_SAFE '%s' "$NEW_MSG"
 
-          git commit --amend -m "$NEW_MSG_SAFE" --no-verify
+          if [ "$TARGET" = "parent" ]; then
+            echo "Fixing parent commit..."
+            PARENT_SHA=$(git rev-parse HEAD~1)
+            BASE_SHA=$(git rev-parse HEAD~2)
+            git reset --soft "$BASE_SHA"
+            git commit -m "$NEW_MSG_SAFE" --no-verify
+            MERGE_MSG=$(git log -1 --format="%s" HEAD~1)
+            if echo "$MERGE_MSG" | grep -qE '^Merge'; then
+              git cherry-pick -n --strategy=recursive -X theirs HEAD~1
+              git commit -m "$MERGE_MSG" --no-verify
+            fi
+          else
+            echo "Fixing HEAD commit..."
+            git commit --amend -m "$NEW_MSG_SAFE" --no-verify
+          fi
+
           git push --force-with-lease origin ${{ github.ref_name }}
 
       - name: Discord notification
