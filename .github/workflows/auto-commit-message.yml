@@ -113,5 +113,11 @@ jobs:
           CURRENT_MSG_SAFE=$(printf '%s' "$CURRENT_MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" | tr -d '"')
           NEW_MSG_SAFE=$(printf '%s' "$NEW_MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" | tr -d '"')
 
+          echo "DISCORD_WEBHOOK length: ${#DISCORD_WEBHOOK}"
+          echo "CURRENT_MSG: $CURRENT_MSG"
+          echo "NEW_MSG: $NEW_MSG"
+
           PAYLOAD="{\"username\":\"AutoCommit\",\"embeds\":[{\"title\":\"Commit Fixed\",\"color\":5763719,\"fields\":[{\"name\":\"Before\",\"value\":$CURRENT_MSG_SAFE},{\"name\":\"After\",\"value\":$NEW_MSG_SAFE}],\"timestamp\":\"$TIMESTAMP\"}]}"
-          curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d "$PAYLOAD"
+          echo "PAYLOAD: $PAYLOAD"
+
+          curl -v -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d "$PAYLOAD" 2>&1 || echo "Discord notification failed"
