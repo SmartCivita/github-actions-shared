@@ -44,9 +44,16 @@ jobs:
             echo "IS_MERGE=true" >> $GITHUB_OUTPUT
             PARENT_MSG=$(git log -1 --pretty=format:"%s" HEAD~1 | tr '\n' ' ' | sed 's/ $//')
             PARENT_SHA=$(git rev-parse HEAD~1)
-            CHANGED_FILES=$(git diff --name-only HEAD~2 HEAD~1 2>/dev/null | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
-            FILE_COUNT=$(git diff --name-only HEAD~2 HEAD~1 2>/dev/null | wc -l | tr -d ' ')
-            DIFF_CONTENT=$(git diff HEAD~2 HEAD~1 2>/dev/null | head -c 1500 | grep -v '^diff\|^index\|^---\|^+' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-500)
+            HAS_GRANDPARENT=$(git rev-parse HEAD~2 2>/dev/null && echo "true" || echo "false")
+            if [ "$HAS_GRANDPARENT" = "true" ]; then
+              CHANGED_FILES=$(git diff --name-only HEAD~2 HEAD~1 | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
+              FILE_COUNT=$(git diff --name-only HEAD~2 HEAD~1 | wc -l | tr -d ' ')
+              DIFF_CONTENT=$(git diff HEAD~2 HEAD~1 | head -c 1500 | grep -v '^diff\|^index\|^---\|^+' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-500)
+            else
+              CHANGED_FILES=""
+              FILE_COUNT="0"
+              DIFF_CONTENT=""
+            fi
             echo "TARGET_COMMIT=$PARENT_SHA" >> $GITHUB_OUTPUT
             echo "CURRENT_MSG=$PARENT_MSG" >> $GITHUB_OUTPUT
             echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
@@ -131,14 +138,16 @@ jobs:
           printf -v NEW_MSG_SAFE '%s' "$NEW_MSG"
 
           IS_MERGE='${{ steps.commit-info.outputs.IS_MERGE }}'
-          TARGET_COMMIT='${{ steps.commit-info.outputs.TARGET_COMMIT }}'
 
           if [ "$IS_MERGE" = "true" ]; then
             echo "Fixing parent of merge commit..."
-            BASE=$(git rev-parse HEAD~2)
+            PARENT_SHA=$(git rev-parse HEAD^1)
+            echo "Parent SHA: $PARENT_SHA"
+            BASE=$(git merge-base HEAD^1 HEAD^2 2>/dev/null) || BASE="$PARENT_SHA"
+            echo "Base SHA: $BASE"
             git reset --soft "$BASE"
             git commit -m "$NEW_MSG_SAFE" --no-verify
-            MERGE_MSG=$(git log -1 --format="%s" HEAD~1)
+            MERGE_MSG=$(git log -1 --format="%s" HEAD^1)
             git commit -m "$MERGE_MSG" --no-verify || true
           else
             echo "Amending commit with new message: $NEW_MSG"
