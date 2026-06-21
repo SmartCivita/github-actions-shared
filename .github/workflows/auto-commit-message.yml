@@ -106,5 +106,12 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          PAYLOAD="{\"username\":\"AutoCommit\",\"embeds\":[{\"title\":\"Commit Fixed\",\"color\":5763719,\"fields\":[{\"name\":\"Before\",\"value\":\"${{ steps.commit-info.outputs.CURRENT_MSG }}\"},{\"name\":\"After\",\"value\":\"${{ steps.fix.outputs.NEW_MSG }}\"}],\"timestamp\":\"$TIMESTAMP\"}]}"
+
+          CURRENT_MSG='${{ steps.commit-info.outputs.CURRENT_MSG }}'
+          NEW_MSG='${{ steps.fix.outputs.NEW_MSG }}'
+
+          CURRENT_MSG_SAFE=$(printf '%s' "$CURRENT_MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" | tr -d '"')
+          NEW_MSG_SAFE=$(printf '%s' "$NEW_MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" | tr -d '"')
+
+          PAYLOAD="{\"username\":\"AutoCommit\",\"embeds\":[{\"title\":\"Commit Fixed\",\"color\":5763719,\"fields\":[{\"name\":\"Before\",\"value\":$CURRENT_MSG_SAFE},{\"name\":\"After\",\"value\":$NEW_MSG_SAFE}],\"timestamp\":\"$TIMESTAMP\"}]}"
           curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d "$PAYLOAD"
