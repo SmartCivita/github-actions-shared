@@ -36,6 +36,11 @@ echo "::group::Calling opencode to generate commit message"
 # - --pure disables external plugins. The default plugin set (warp-notifications,
 #   copilot, LSPs, MCPs) is geared for interactive TUI use and can hang for
 #   minutes in headless CI environments trying to fetch provider lists.
+# - OPENCODE_DISABLE_AUTOUPDATE / _DISABLE_MODELS_FETCH skip the network calls
+#   opencode does on startup (autoupdate check, fetching model lists from
+#   models.dev). In a CI runner these can hang for minutes waiting on a flaky
+#   network. The model is provided explicitly via --model so we don't need
+#   the fetched list.
 # - timeout 300 (5 min) tolerates large diffs on slow providers.
 # - keep stdout and stderr in separate files so we can report them on failure.
 RAW_FILE=$(mktemp)
@@ -43,6 +48,8 @@ ERR_FILE=$(mktemp)
 trap 'rm -f "$RAW_FILE" "$ERR_FILE"' EXIT
 
 set +e
+OPENCODE_DISABLE_AUTOUPDATE=true \
+OPENCODE_DISABLE_MODELS_FETCH=true \
 timeout 300 opencode run --pure --model opencode-go/qwen3.7-max "$PROMPT" \
   >"$RAW_FILE" 2>"$ERR_FILE"
 RC=$?
