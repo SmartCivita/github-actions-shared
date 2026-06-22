@@ -1,4 +1,34 @@
-Create a SHORT conventional commit message. Output ONLY the message, nothing else.
+Generate a conventional commit message with a subject line AND a multi-line body describing the changes.
+
+Output format (strictly two parts, separated by a blank line):
+
+    <type>(<scope>): <subject>
+    <BLANK LINE>
+    <body line 1>
+    <body line 2>
+    <body line 3>
+
+SUBJECT RULES:
+- Format: type(scope) description
+- Max 72 characters
+- Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
+- Description must reflect the actual code changes
+
+BODY RULES:
+- Wrap at 72 characters per line
+- Use bullet points (start each line with "- ")
+- Each bullet explains ONE specific change: what was changed and why
+- Be concrete: name the function, file, or behavior affected
+- 3-5 bullets is the right size
+- Focus on intent, not mechanics
+
+OUTPUT RULES:
+- Output ONLY the commit message (subject + blank line + body)
+- NEVER use backticks, code fences, or markdown formatting around the message
+- Do NOT include "[skip ci]" or any other trailer
+- The trailer is added automatically by the workflow
+
+INPUT:
 
 CURRENT MESSAGE: __CURRENT_MSG__
 CHANGED FILES (__FILE_COUNT__):
@@ -6,11 +36,3 @@ __CHANGED_FILES__
 
 CODE DIFF (added lines only):
 __DIFF_CONTENT__
-
-RULES:
-- Format: type(scope) description
-- Max 72 characters
-- Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
-- Description must reflect the actual code changes
-- NEVER use backticks, code fences, or markdown
-- Output ONLY the commit message on a single line

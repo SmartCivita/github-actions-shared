@@ -41,8 +41,8 @@ esac
 
 TITLE="$EMOJI $TITLE_BASE"
 
-OLD_MSG=$(echo "$OLD_MSG" | tr '\n' ' ' | sed 's/\r//' | cut -c1-200)
-NEW_MSG=$(echo "$NEW_MSG" | tr '\n' ' ' | sed 's/\r//' | cut -c1-200)
+OLD_MSG=$(echo "$OLD_MSG" | tr '\n' ' ' | sed 's/\r//' | cut -c1-1000)
+NEW_MSG=$(echo "$NEW_MSG" | tr '\n' ' ' | sed 's/\r//' | cut -c1-1000)
 
 [ -z "$RUN_URL" ] && RUN_URL="https://github.com/$GITHUB_REPOSITORY/actions"
 [ -z "$URL" ] && URL="$RUN_URL"
