@@ -30,12 +30,27 @@ PROMPT=$(sed \
   -e "s|__DIFF_CONTENT__|${DIFF_CONTENT:-}|g" \
   "$PROMPT_TEMPLATE")
 
+# Install a tool-less custom agent in the working directory. opencode looks for
+# agents in <cwd>/.opencode/agents/*.md and the user-supplied <prompt> as
+# message. The default 'build' agent has bash/edit enabled, so the model would
+# try to run 'git diff' to investigate, then stall waiting for tool approval
+# in a headless runner. Using a custom agent with permission.*: deny forces
+# text-only output. See https://opencode.ai/docs/agents/#permissions.
+AGENT_SRC="${GITHUB_ACTION_PATH:-.}/commit-message-agent.md"
+AGENT_DEST_DIR="${GITHUB_WORKSPACE:-$PWD}/.opencode/agents"
+mkdir -p "$AGENT_DEST_DIR"
+cp "$AGENT_SRC" "$AGENT_DEST_DIR/commit-message.md"
+
 echo "::group::Calling opencode to generate commit message"
 
 # Call the model.
 # - --pure disables external plugins. The default plugin set (warp-notifications,
 #   copilot, LSPs, MCPs) is geared for interactive TUI use and can hang for
 #   minutes in headless CI environments trying to fetch provider lists.
+# - --agent commit-message uses the local tool-less agent we just installed
+#   (see AGENT_SRC above). Without this, the default 'build' agent has
+#   bash/edit enabled and the model tries to investigate the repo with
+#   'git diff' before responding, then stalls waiting for tool approval.
 # - OPENCODE_DISABLE_AUTOUPDATE / _DISABLE_MODELS_FETCH skip the network calls
 #   opencode does on startup (autoupdate check, fetching model lists from
 #   models.dev). In a CI runner these can hang for minutes waiting on a flaky
@@ -45,12 +60,12 @@ echo "::group::Calling opencode to generate commit message"
 # - keep stdout and stderr in separate files so we can report them on failure.
 RAW_FILE=$(mktemp)
 ERR_FILE=$(mktemp)
-trap 'rm -f "$RAW_FILE" "$ERR_FILE"' EXIT
+trap 'rm -rf "$RAW_FILE" "$ERR_FILE" "$AGENT_DEST_DIR/commit-message.md" "$AGENT_DEST_DIR"' EXIT
 
 set +e
 OPENCODE_DISABLE_AUTOUPDATE=true \
 OPENCODE_DISABLE_MODELS_FETCH=true \
-timeout 300 opencode run --pure --model opencode-go/qwen3.7-max "$PROMPT" \
+timeout 300 opencode run --pure --agent commit-message --model opencode-go/qwen3.7-max "$PROMPT" \
   >"$RAW_FILE" 2>"$ERR_FILE"
 RC=$?
 set -e
