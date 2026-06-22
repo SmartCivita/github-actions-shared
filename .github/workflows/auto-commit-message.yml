@@ -5,13 +5,6 @@ on:
     branches:
       - "*"
   workflow_call:
-    inputs:
-      target-branch:
-        type: string
-        default: main
-      runner-label:
-        type: string
-        default: self-hosted
     secrets:
       OPENCODE_API_KEY:
         required: true
@@ -20,13 +13,11 @@ on:
       PERSONAL_ACCESS_TOKEN:
         required: true
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
   update-commit-message:
-    runs-on: ${{ inputs.runner-label }}
+    runs-on: self-hosted
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -35,162 +26,112 @@ jobs:
           persist-credentials: false
 
       - name: Get commit info
-        id: commit-info
+        id: info
         run: |
-          BRANCH="${{ github.ref_name }}"
-          echo "=== DEBUG: Git history ==="
-          git log --oneline -5
-          echo "=== DEBUG: Commit count ==="
-          git rev-list --count HEAD
-          echo "=== DEBUG: Current commit ==="
-          git log -1 --pretty=format:"%H %s"
-          CURRENT_MSG=$(git log -1 --pretty=format:"%s" | tr '\n' ' ' | sed 's/ $//')
-          echo "CURRENT_MSG: $CURRENT_MSG"
+          set -euo pipefail
 
-          if echo "$CURRENT_MSG" | grep -qE '^Merge'; then
-            echo "IS_MERGE=true" >> $GITHUB_OUTPUT
-            echo "DEBUG: Processing merge commit"
-            PARENT_MSG=$(git log -1 --pretty=format:"%s" HEAD~1 | tr '\n' ' ' | sed 's/ $//')
-            PARENT_COUNT=$(git cat-file -p HEAD | grep -c "^parent ")
-            echo "DEBUG: Parent count: $PARENT_COUNT"
-            if [ "$PARENT_COUNT" -ge 2 ] && git rev-parse HEAD~2 >/dev/null 2>&1; then
-              echo "DEBUG: Using HEAD~2 HEAD~1 for diff"
-              CHANGED_FILES=$(git diff --name-only HEAD~2 HEAD~1 | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
-              FILE_COUNT=$(git diff --name-only HEAD~2 HEAD~1 | wc -l | tr -d ' ')
-              DIFF_CONTENT=$(git diff HEAD~2 HEAD~1 | grep -E '^\+[^+]' | head -20 | tr '\n' ' ')
-            else
-              echo "DEBUG: Using HEAD~1 HEAD"
-              CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
-              FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
-              DIFF_CONTENT=$(git diff HEAD~1 HEAD | grep -E '^\+[^+]' | head -20 | tr '\n' ' ')
-            fi
-            echo "CURRENT_MSG=$PARENT_MSG" >> $GITHUB_OUTPUT
-          else
-            echo "IS_MERGE=false" >> $GITHUB_OUTPUT
-            echo "DEBUG: Processing non-merge commit"
-            if git rev-parse HEAD~1 >/dev/null 2>&1; then
-              echo "DEBUG: HEAD~1 exists, getting diff"
-              CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
-              FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
-              DIFF_CONTENT=$(git diff HEAD~1 HEAD | grep -E '^\+[^+]' | head -20 | tr '\n' ' ')
-            else
-              echo "DEBUG: HEAD~1 does NOT exist, single commit"
-              CHANGED_FILES=""
-              FILE_COUNT="0"
-              DIFF_CONTENT=""
-            fi
-            echo "CURRENT_MSG=$CURRENT_MSG" >> $GITHUB_OUTPUT
-          fi
-
-          echo "DEBUG: CHANGED_FILES=$CHANGED_FILES"
-          echo "DEBUG: FILE_COUNT=$FILE_COUNT"
-          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_OUTPUT
-          echo "FILE_COUNT=$FILE_COUNT" >> $GITHUB_OUTPUT
-          echo "DIFF_CONTENT=$DIFF_CONTENT" >> $GITHUB_OUTPUT
-          echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
-
-      - name: Fix commit message
-        id: fix
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        run: |
-          CURRENT_MSG='${{ steps.commit-info.outputs.CURRENT_MSG }}'
-
-          if echo "$CURRENT_MSG" | grep -qE '^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)[:\(]'; then
-            echo "status=skipped" >> $GITHUB_OUTPUT
+          # Skip merge commits: rewriting them is destructive and not worth the risk.
+          if [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -gt 2 ]; then
+            echo "is_merge=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          CHANGED_FILES='${{ steps.commit-info.outputs.CHANGED_FILES }}'
-          FILE_COUNT='${{ steps.commit-info.outputs.FILE_COUNT }}'
-          DIFF_CONTENT='${{ steps.commit-info.outputs.DIFF_CONTENT }}'
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD || true)
+          FILE_COUNT=$(printf '%s\n' "$CHANGED_FILES" | grep -c . || true)
+          DIFF_CONTENT=$(git diff HEAD~1 HEAD | grep -E '^\+[^+]' | head -20 || true)
+          CURRENT_MSG=$(git log -1 --pretty=%s)
 
-          PROMPT_FILE="/tmp/prompt_$$.txt"
-          printf '%s\n' \
-            "Create a SHORT conventional commit message. Output ONLY the message." \
-            "" \
-            "CURRENT MESSAGE: $CURRENT_MSG" \
-            "CHANGED FILES ($FILE_COUNT): $CHANGED_FILES" \
-            "CODE DIFF: $DIFF_CONTENT" \
-            "" \
-            "RULES:" \
-            "- Format: type(scope) description" \
-            "- Max 72 characters" \
-            "- Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert" \
-            "- Description must reflect actual code changes" \
-            "- Output ONLY the commit message" \
-            "- NEVER use backticks" > "$PROMPT_FILE"
+          JSON_PATH="$RUNNER_TEMP/commit-info.json"
+          jq -n \
+            --arg msg "$CURRENT_MSG" \
+            --arg files "$CHANGED_FILES" \
+            --arg count "$FILE_COUNT" \
+            --arg diff "$DIFF_CONTENT" \
+            --arg branch "$GITHUB_REF_NAME" \
+            '{current_msg:$msg, files:$files, count:($count|tonumber), diff:$diff, branch:$branch}' \
+            > "$JSON_PATH"
 
-          RESPONSE=$(timeout 60 opencode run --model opencode-go/qwen3.7-max "$(cat "$PROMPT_FILE")" 2>/dev/null) || RESPONSE=""
-          rm -f "$PROMPT_FILE"
+          {
+            echo "is_merge=false"
+            echo "current_msg<<EOF"
+            echo "$CURRENT_MSG"
+            echo "EOF"
+            echo "json_path=$JSON_PATH"
+          } >> "$GITHUB_OUTPUT"
 
+      - name: Fix commit message
+        id: fix
+        if: steps.info.outputs.is_merge != 'true'
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          COMMIT_JSON: ${{ steps.info.outputs.json_path }}
+        run: |
+          set -euo pipefail
+
+          CURRENT_MSG=$(jq -r .current_msg "$COMMIT_JSON")
+
+          # Already a conventional commit, nothing to do.
+          if echo "$CURRENT_MSG" | grep -qE '^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)[:\(]'; then
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          FILE_COUNT=$(jq -r .count "$COMMIT_JSON")
+          CHANGED_FILES=$(jq -r .files "$COMMIT_JSON")
+          DIFF_CONTENT=$(jq -r .diff "$COMMIT_JSON")
+
+          PROMPT="Create a SHORT conventional commit message. Output ONLY the message, nothing else.
+
+          CURRENT MESSAGE: $CURRENT_MSG
+          CHANGED FILES ($FILE_COUNT):
+          $CHANGED_FILES
+
+          CODE DIFF (added lines only):
+          $DIFF_CONTENT
+
+          RULES:
+          - Format: type(scope) description
+          - Max 72 characters
+          - Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
+          - Description must reflect the actual code changes
+          - NEVER use backticks, code fences, or markdown
+          - Output ONLY the commit message on a single line"
+
+          RESPONSE=$(timeout 60 opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null || true)
           NEW_MSG=$(echo "$RESPONSE" | tr -d '`' | sed 's/^[*#>\ ]*//' | head -1 | cut -c1-72 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-          if [ -z "$NEW_MSG" ] || [ ${#NEW_MSG} -lt 5 ]; then
-            TYPE=$(echo "$CHANGED_FILES" | cut -d',' -f1 | sed 's/\..*//' | head -c 20)
-            [ -z "$TYPE" ] && TYPE="chore"
-            NEW_MSG="${TYPE}(main) update files"
+          if [ -z "$NEW_MSG" ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          if ! echo "$NEW_MSG" | grep -qE '^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)'; then
-            TYPE=$(echo "$CHANGED_FILES" | cut -d',' -f1 | sed 's/\..*//' | head -c 20)
-            [ -z "$TYPE" ] && TYPE="chore"
-            NEW_MSG="${TYPE}(main) update files"
-          fi
-
-          echo "status=success" >> $GITHUB_OUTPUT
-          echo "NEW_MSG=$NEW_MSG" >> $GITHUB_OUTPUT
+          {
+            echo "status=success"
+            echo "new_msg<<EOF"
+            echo "$NEW_MSG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Apply fix
         if: steps.fix.outputs.status == 'success'
         env:
           GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          NEW_MSG: ${{ steps.fix.outputs.new_msg }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
-
-          NEW_MSG='${{ steps.fix.outputs.NEW_MSG }}'
-          printf -v NEW_MSG_SAFE '%s' "$NEW_MSG"
-
-          IS_MERGE='${{ steps.commit-info.outputs.IS_MERGE }}'
-
-          if [ "$IS_MERGE" = "true" ]; then
-            echo "Fixing parent of merge commit..."
-            MERGE_SHA=$(git rev-parse HEAD)
-            MERGE_TREE=$(git cat-file -p "$MERGE_SHA" | grep -E "^tree" | awk '{print $2}')
-            PARENT1=$(git cat-file -p "$MERGE_SHA" | grep -E "^parent" | head -1 | awk '{print $2}')
-            PARENT2=$(git cat-file -p "$MERGE_SHA" | grep -E "^parent" | tail -1 | awk '{print $2}')
-            git reset --hard HEAD~1 >/dev/null 2>&1
-            git commit --amend -m "$NEW_MSG_SAFE" --no-verify >/dev/null 2>&1
-            NEW_PARENT=$(git rev-parse HEAD)
-            echo "Creating new merge commit..."
-            git commit-tree "$MERGE_TREE" -p "$NEW_PARENT" -p "$PARENT2" -m "$(git log -1 --format="%s" "$MERGE_SHA")" >/dev/null 2>&1
-            NEW_MERGE_SHA=$(git commit-tree "$MERGE_TREE" -p "$NEW_PARENT" -p "$PARENT2" -m "$(git log -1 --format="%s" "$MERGE_SHA")")
-            git reset --hard "$NEW_MERGE_SHA" >/dev/null 2>&1
-            echo "Done: parent message fixed"
-          else
-            echo "Amending commit with new message: $NEW_MSG"
-            git commit --amend -m "$NEW_MSG_SAFE" --no-verify >/dev/null 2>&1
-          fi
-
-          git push --force-with-lease origin ${{ github.ref_name }}
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git commit --amend -m "$NEW_MSG" --no-verify
+          git push --force-with-lease origin "$GITHUB_REF_NAME"
 
       - name: Discord notification
         if: steps.fix.outputs.status == 'success'
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          CURRENT_MSG: ${{ steps.commit-info.outputs.CURRENT_MSG }}
-          NEW_MSG: ${{ steps.fix.outputs.NEW_MSG }}
-        run: |
-          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          CURRENT_MSG_ESC=$(echo "$CURRENT_MSG" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' | tr -d '\n')
-          NEW_MSG_ESC=$(echo "$NEW_MSG" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' | tr -d '\n')
-          PAYLOAD="{\"username\":\"AutoCommit\",\"embeds\":[{\"title\":\"Commit Fixed\",\"color\":5763719,\"fields\":[{\"name\":\"Before\",\"value\":$CURRENT_MSG_ESC},{\"name\":\"After\",\"value\":$NEW_MSG_ESC}],\"timestamp\":\"$TIMESTAMP\"}]}"
-          echo "$PAYLOAD" > /tmp/discord_payload.json
-          curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d @/tmp/discord_payload.json
-
-      - name: Discord notification skipped
-        if: steps.fix.outputs.status == 'skipped'
-        run: |
-          echo "No commits needed fixing"
+        uses: ./.github/actions/discord-notify
+        with:
+          title: Commit Message Fixed
+          event-type: commit
+          status: success
+          old-msg: ${{ steps.info.outputs.current_msg }}
+          new-msg: ${{ steps.fix.outputs.new_msg }}
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
