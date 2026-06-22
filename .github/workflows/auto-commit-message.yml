@@ -13,6 +13,12 @@ on:
       PERSONAL_ACCESS_TOKEN:
         required: true
 
+# Collapse duplicate runs on the same branch. The bot's own amend push is
+# blocked at the source by the [skip ci] trailer appended in apply-commit-fix.sh.
+concurrency:
+  group: auto-commit-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   update-commit-message:
     runs-on: self-hosted

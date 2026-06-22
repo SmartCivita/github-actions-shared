@@ -5,6 +5,14 @@ on:
     branches:
       - "*"
 
+# Collapse duplicate runs when multiple pushes land in quick succession on the
+# same branch. The bot's own amend push is already blocked at the source by the
+# [skip ci] trailer appended in apply-commit-fix.sh, so this is just a safety
+# net for rapid human pushes.
+concurrency:
+  group: auto-commit-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
