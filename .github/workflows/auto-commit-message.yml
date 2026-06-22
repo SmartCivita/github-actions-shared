@@ -57,20 +57,12 @@ jobs:
               echo "DEBUG: Using HEAD~2 HEAD~1 for diff"
               CHANGED_FILES=$(git diff --name-only HEAD~2 HEAD~1 | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~2 HEAD~1 | wc -l | tr -d ' ')
-              DIFF_CONTENT=""
-              for FILE in $(echo "$CHANGED_FILES" | tr ',' ' '); do
-                DIFF=$(cd /tmp && rm -f old.txt new.txt && git show HEAD~1^:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > old.txt && git show HEAD~1:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > new.txt && diff -U0 old.txt new.txt 2>/dev/null | grep -E '^\+[^+]' | head -10 | tr '\n' ' ' && rm -f old.txt new.txt)
-                DIFF_CONTENT="$DIFF_CONTENT $DIFF"
-              done
+              DIFF_CONTENT=$(git diff HEAD~2 HEAD~1 | grep -E '^\+[^+]' | head -20 | tr '\n' ' ')
             else
               echo "DEBUG: Using HEAD~1 HEAD"
               CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
-              DIFF_CONTENT=""
-              for FILE in $(echo "$CHANGED_FILES" | tr ',' ' '); do
-                DIFF=$(cd /tmp && rm -f old.txt new.txt && git show HEAD~1:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > old.txt && git show HEAD:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > new.txt && diff -U0 old.txt new.txt 2>/dev/null | grep -E '^\+[^+]' | head -10 | tr '\n' ' ' && rm -f old.txt new.txt)
-                DIFF_CONTENT="$DIFF_CONTENT $DIFF"
-              done
+              DIFF_CONTENT=$(git diff HEAD~1 HEAD | grep -E '^\+[^+]' | head -20 | tr '\n' ' ')
             fi
             echo "CURRENT_MSG=$PARENT_MSG" >> $GITHUB_OUTPUT
           else
@@ -80,11 +72,7 @@ jobs:
               echo "DEBUG: HEAD~1 exists, getting diff"
               CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',' | sed 's/,$//' | tr -d '\n')
               FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
-              DIFF_CONTENT=""
-              for FILE in $(echo "$CHANGED_FILES" | tr ',' ' '); do
-                DIFF=$(cd /tmp && rm -f old.txt new.txt && git show HEAD~1:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > old.txt && git show HEAD:"$FILE" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 > new.txt && diff -U0 old.txt new.txt 2>/dev/null | grep -E '^\+[^+]' | head -10 | tr '\n' ' ' && rm -f old.txt new.txt)
-                DIFF_CONTENT="$DIFF_CONTENT $DIFF"
-              done
+              DIFF_CONTENT=$(git diff HEAD~1 HEAD | grep -E '^\+[^+]' | head -20 | tr '\n' ' ')
             else
               echo "DEBUG: HEAD~1 does NOT exist, single commit"
               CHANGED_FILES=""
