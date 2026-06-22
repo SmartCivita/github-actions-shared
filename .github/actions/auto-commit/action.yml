@@ -25,38 +25,61 @@ runs:
         fetch-depth: 0
         persist-credentials: false
 
-    - name: Get commit info
-      id: info
+    - name: Detect if HEAD is a merge commit
+      id: merge-check
       shell: bash
-      run: bash "${{ github.action_path }}/scripts/get-commit-info.sh"
+      run: bash "${{ github.action_path }}/scripts/detect-merge.sh"
 
-    - name: Fix commit message
-      id: fix
-      if: steps.info.outputs.is_merge != 'true'
+    - name: Extract commit data (message, files, diff)
+      id: data
+      if: steps.merge-check.outputs.is_merge != 'true'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/extract-commit-data.sh"
+
+    - name: Check if commit message is already conventional
+      id: check
+      if: steps.merge-check.outputs.is_merge != 'true'
+      shell: bash
+      env:
+        CURRENT_MSG: ${{ steps.data.outputs.current_msg }}
+      run: bash "${{ github.action_path }}/scripts/check-conventional.sh"
+
+    - name: Generate conventional message with opencode
+      id: generate
+      if: steps.check.outputs.status == 'needs-fix'
       shell: bash
       env:
         OPENCODE_API_KEY: ${{ inputs.opencode-api-key }}
-        CURRENT_MSG: ${{ steps.info.outputs.current_msg }}
-        CHANGED_FILES: ${{ steps.info.outputs.files }}
-        FILE_COUNT: ${{ steps.info.outputs.file_count }}
-        DIFF_CONTENT: ${{ steps.info.outputs.diff }}
-      run: bash "${{ github.action_path }}/scripts/fix-commit-message.sh" "${{ github.action_path }}/prompt.txt"
+        CURRENT_MSG: ${{ steps.data.outputs.current_msg }}
+        CHANGED_FILES: ${{ steps.data.outputs.files }}
+        FILE_COUNT: ${{ steps.data.outputs.file_count }}
+        DIFF_CONTENT: ${{ steps.data.outputs.diff }}
+      run: bash "${{ github.action_path }}/scripts/generate-message.sh" "${{ github.action_path }}/prompt.txt"
 
-    - name: Apply fix
-      if: steps.fix.outputs.status == 'success'
+    - name: Sanitize model output
+      id: sanitize
+      if: steps.generate.outputs.raw_response != ''
+      shell: bash
+      env:
+        raw_response: ${{ steps.generate.outputs.raw_response }}
+      run: bash "${{ github.action_path }}/scripts/sanitize-message.sh"
+
+    - name: Amend commit and force-push
+      id: apply
+      if: steps.sanitize.outputs.status == 'success'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.personal-access-token }}
-        NEW_MSG: ${{ steps.fix.outputs.new_msg }}
+        NEW_MSG: ${{ steps.sanitize.outputs.new_msg }}
       run: bash "${{ github.action_path }}/scripts/apply-commit-fix.sh"
 
-    - name: Discord notification
-      if: steps.fix.outputs.status == 'success' && inputs.notify == 'true'
+    - name: Send Discord notification
+      if: steps.apply.outputs.result == 'success' && inputs.notify == 'true'
       uses: SmartCivita/github-actions-shared/.github/actions/discord-notify@main
       with:
         title: Commit Message Fixed
         event-type: commit
-        old-msg: ${{ steps.info.outputs.current_msg }}
-        new-msg: ${{ steps.fix.outputs.new_msg }}
+        old-msg: ${{ steps.data.outputs.current_msg }}
+        new-msg: ${{ steps.sanitize.outputs.new_msg }}
         webhook: ${{ inputs.discord-webhook }}
         run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
