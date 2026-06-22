@@ -13,11 +13,11 @@ on:
       PERSONAL_ACCESS_TOKEN:
         required: true
 
-# Collapse duplicate runs on the same branch. The bot's own amend push is
-# blocked at the source by the [skip ci] trailer appended in apply-commit-fix.sh.
-concurrency:
-  group: auto-commit-${{ github.ref }}
-  cancel-in-progress: false
+# NOTE: do not declare `concurrency` here. This workflow is invoked via
+# workflow_call from a top-level caller. Concurrency must be declared only on
+# the top-level workflow, otherwise GitHub aborts with a deadlock error
+# ("deadlock was detected for concurrency group ... between a top level
+# workflow and ...").
 
 jobs:
   update-commit-message:
