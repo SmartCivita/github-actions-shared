@@ -29,6 +29,7 @@ jobs:
         id: info
         run: |
           set -euo pipefail
+          : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
 
           # Skip merge commits: rewriting them is destructive and not worth the risk.
           if [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -gt 2 ]; then
@@ -41,22 +42,18 @@ jobs:
           DIFF_CONTENT=$(git diff HEAD~1 HEAD | grep -E '^\+[^+]' | head -20 || true)
           CURRENT_MSG=$(git log -1 --pretty=%s)
 
-          JSON_PATH="$RUNNER_TEMP/commit-info.json"
-          jq -n \
-            --arg msg "$CURRENT_MSG" \
-            --arg files "$CHANGED_FILES" \
-            --arg count "$FILE_COUNT" \
-            --arg diff "$DIFF_CONTENT" \
-            --arg branch "$GITHUB_REF_NAME" \
-            '{current_msg:$msg, files:$files, count:($count|tonumber), diff:$diff, branch:$branch}' \
-            > "$JSON_PATH"
-
           {
             echo "is_merge=false"
             echo "current_msg<<EOF"
             echo "$CURRENT_MSG"
             echo "EOF"
-            echo "json_path=$JSON_PATH"
+            echo "files<<EOF"
+            echo "$CHANGED_FILES"
+            echo "EOF"
+            echo "file_count=$FILE_COUNT"
+            echo "diff<<EOF"
+            echo "$DIFF_CONTENT"
+            echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Fix commit message
@@ -64,21 +61,19 @@ jobs:
         if: steps.info.outputs.is_merge != 'true'
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          COMMIT_JSON: ${{ steps.info.outputs.json_path }}
+          CURRENT_MSG: ${{ steps.info.outputs.current_msg }}
+          CHANGED_FILES: ${{ steps.info.outputs.files }}
+          FILE_COUNT: ${{ steps.info.outputs.file_count }}
+          DIFF_CONTENT: ${{ steps.info.outputs.diff }}
         run: |
           set -euo pipefail
-
-          CURRENT_MSG=$(jq -r .current_msg "$COMMIT_JSON")
+          : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
 
           # Already a conventional commit, nothing to do.
           if echo "$CURRENT_MSG" | grep -qE '^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)[:\(]'; then
             echo "status=skipped" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          FILE_COUNT=$(jq -r .count "$COMMIT_JSON")
-          CHANGED_FILES=$(jq -r .files "$COMMIT_JSON")
-          DIFF_CONTENT=$(jq -r .diff "$COMMIT_JSON")
 
           PROMPT="Create a SHORT conventional commit message. Output ONLY the message, nothing else.
 
@@ -98,7 +93,7 @@ jobs:
           - Output ONLY the commit message on a single line"
 
           RESPONSE=$(timeout 60 opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/dev/null || true)
-          NEW_MSG=$(echo "$RESPONSE" | tr -d '`' | sed 's/^[*#>\ ]*//' | head -1 | cut -c1-72 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          NEW_MSG=$(printf '%s' "$RESPONSE" | tr -d '`' | sed 's/^[*#>\ ]*//' | head -1 | cut -c1-72 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
           if [ -z "$NEW_MSG" ]; then
             echo "status=failed" >> "$GITHUB_OUTPUT"
