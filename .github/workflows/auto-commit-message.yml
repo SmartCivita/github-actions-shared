@@ -19,42 +19,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: SmartCivita/github-actions-shared/.github/actions/auto-commit@main
         with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Get commit info
-        id: info
-        run: bash .github/scripts/get-commit-info.sh
-
-      - name: Fix commit message
-        id: fix
-        if: steps.info.outputs.is_merge != 'true'
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          CURRENT_MSG: ${{ steps.info.outputs.current_msg }}
-          CHANGED_FILES: ${{ steps.info.outputs.files }}
-          FILE_COUNT: ${{ steps.info.outputs.file_count }}
-          DIFF_CONTENT: ${{ steps.info.outputs.diff }}
-          PROMPT_FILE: .github/prompts/commit-message.txt
-        run: bash .github/scripts/fix-commit-message.sh
-
-      - name: Apply fix
-        if: steps.fix.outputs.status == 'success'
-        env:
-          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-          NEW_MSG: ${{ steps.fix.outputs.new_msg }}
-        run: bash .github/scripts/apply-commit-fix.sh
-
-      - name: Discord notification
-        if: steps.fix.outputs.status == 'success'
-        uses: SmartCivita/github-actions-shared/.github/actions/discord-notify@main
-        with:
-          title: Commit Message Fixed
-          event-type: commit
-          old-msg: ${{ steps.info.outputs.current_msg }}
-          new-msg: ${{ steps.fix.outputs.new_msg }}
-          webhook: ${{ secrets.DISCORD_WEBHOOK }}
-          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          opencode-api-key: ${{ secrets.OPENCODE_API_KEY }}
+          discord-webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          personal-access-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}

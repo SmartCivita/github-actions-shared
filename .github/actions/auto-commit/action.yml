@@ -1,0 +1,62 @@
+name: Auto Commit
+description: Rewrite a non-conventional commit message into a conventional one using opencode, and notify Discord.
+
+inputs:
+  opencode-api-key:
+    description: API key for the opencode model provider
+    required: true
+  discord-webhook:
+    description: Discord webhook URL for notifications
+    required: true
+  personal-access-token:
+    description: GitHub PAT with repo write access used to push the amended commit
+    required: true
+  notify:
+    description: Send a Discord notification after a successful fix
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Get commit info
+      id: info
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/get-commit-info.sh"
+
+    - name: Fix commit message
+      id: fix
+      if: steps.info.outputs.is_merge != 'true'
+      shell: bash
+      env:
+        OPENCODE_API_KEY: ${{ inputs.opencode-api-key }}
+        CURRENT_MSG: ${{ steps.info.outputs.current_msg }}
+        CHANGED_FILES: ${{ steps.info.outputs.files }}
+        FILE_COUNT: ${{ steps.info.outputs.file_count }}
+        DIFF_CONTENT: ${{ steps.info.outputs.diff }}
+      run: bash "${{ github.action_path }}/scripts/fix-commit-message.sh" "${{ github.action_path }}/prompt.txt"
+
+    - name: Apply fix
+      if: steps.fix.outputs.status == 'success'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.personal-access-token }}
+        NEW_MSG: ${{ steps.fix.outputs.new_msg }}
+      run: bash "${{ github.action_path }}/scripts/apply-commit-fix.sh"
+
+    - name: Discord notification
+      if: steps.fix.outputs.status == 'success' && inputs.notify == 'true'
+      uses: SmartCivita/github-actions-shared/.github/actions/discord-notify@main
+      with:
+        title: Commit Message Fixed
+        event-type: commit
+        old-msg: ${{ steps.info.outputs.current_msg }}
+        new-msg: ${{ steps.fix.outputs.new_msg }}
+        webhook: ${{ inputs.discord-webhook }}
+        run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
