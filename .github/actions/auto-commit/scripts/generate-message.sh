@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Generate a conventional commit message using opencode.
 # Emits raw_response (the model's full text output) to GITHUB_OUTPUT.
-# Fails with exit 1 if the model returns nothing, so the workflow stops loudly
-# instead of silently producing a degraded commit message.
+# Fails with exit 1 if the model returns nothing or times out, so the workflow
+# stops loudly instead of silently producing a degraded commit message.
 # Usage: generate-message.sh <prompt-template-file>
 # Requires env: CURRENT_MSG, CHANGED_FILES, FILE_COUNT, DIFF_CONTENT, OPENCODE_API_KEY, GITHUB_OUTPUT
 
@@ -32,25 +32,69 @@ PROMPT=$(sed \
 
 echo "::group::Calling opencode to generate commit message"
 
-# Call the model. Capture stdout, allow non-zero exit (we validate after).
+# Call the model.
+# - timeout 300 (5 min) tolerates large diffs on slow providers.
+# - keep stdout and stderr in separate files so we can report them on failure.
+RAW_FILE=$(mktemp)
+ERR_FILE=$(mktemp)
+trap 'rm -f "$RAW_FILE" "$ERR_FILE"' EXIT
+
 set +e
-RAW_RESPONSE=$(timeout 60 opencode run --model opencode-go/qwen3.7-max "$PROMPT" 2>/tmp/opencode.err)
+timeout 300 opencode run --model opencode-go/qwen3.7-max "$PROMPT" \
+  >"$RAW_FILE" 2>"$ERR_FILE"
 RC=$?
 set -e
 
+RAW_RESPONSE=$(cat "$RAW_FILE")
+ERR_OUTPUT=$(cat "$ERR_FILE")
+
 echo "::endgroup::"
 
-if [ $RC -ne 0 ]; then
-  echo "::error::opencode run failed with exit code $RC" >&2
-  echo "::error::stderr from opencode:" >&2
-  cat /tmp/opencode.err >&2 || true
-  rm -f /tmp/opencode.err
-  exit 1
+# Detect known transient/infrastructure failure modes from stderr before
+# branching on the exit code. This produces actionable messages instead of
+# generic "exit code N" errors.
+if [ -n "$ERR_OUTPUT" ]; then
+  if [[ "$ERR_OUTPUT" == *"certificate"* || "$ERR_OUTPUT" == *"x509"* || "$ERR_OUTPUT" == *"tls"* || "$ERR_OUTPUT" == *"SSL_"* ]]; then
+    echo "::error::opencode hit a TLS/certificate error. The runner's trust store may be missing the CA chain for the model API." >&2
+    echo "::error::Fix on the runner: install/update ca-certificates and ensure SSL_CERT_FILE/SSL_CERT_DIR point to a valid bundle." >&2
+    echo "::error::stderr: $ERR_OUTPUT" >&2
+    exit 1
+  fi
+  if [[ "$ERR_OUTPUT" == *"timeout"* || "$ERR_OUTPUT" == *"context deadline"* || "$ERR_OUTPUT" == *"connection refused"* || "$ERR_OUTPUT" == *"no such host"* || "$ERR_OUTPUT" == *"network"* || "$ERR_OUTPUT" == *"unreachable"* ]]; then
+    echo "::error::opencode hit a network/timeout error reaching the model API." >&2
+    echo "::error::stderr: $ERR_OUTPUT" >&2
+    exit 1
+  fi
 fi
-rm -f /tmp/opencode.err
+
+# Distinguish failure modes for clearer logs.
+case "$RC" in
+  0)   ;;
+  124)
+    echo "::error::opencode run timed out after 300s. Likely causes:" >&2
+    echo "::error::  - Provider slowness on this model" >&2
+    echo "::error::  - opencode waiting for interactive input (login prompt, TTY)" >&2
+    echo "::error::  - Network issue reaching the model API" >&2
+    [ -n "$ERR_OUTPUT" ] && { echo "::error::stderr from opencode:" >&2; printf '%s\n' "$ERR_OUTPUT" >&2; }
+    [ -n "$RAW_RESPONSE" ] && echo "::error::First 200 bytes of stdout: ${RAW_RESPONSE:0:200}" >&2
+    exit 1
+    ;;
+  137)
+    echo "::error::opencode was killed (signal 9, OOM). Run on a runner with more memory." >&2
+    [ -n "$ERR_OUTPUT" ] && { echo "::error::stderr from opencode:" >&2; printf '%s\n' "$ERR_OUTPUT" >&2; }
+    exit 1
+    ;;
+  *)
+    echo "::error::opencode run failed with exit code $RC" >&2
+    [ -n "$ERR_OUTPUT" ] && { echo "::error::stderr from opencode:" >&2; printf '%s\n' "$ERR_OUTPUT" >&2; }
+    [ -n "$RAW_RESPONSE" ] && echo "::error::First 200 bytes of stdout: ${RAW_RESPONSE:0:200}" >&2
+    exit 1
+    ;;
+esac
 
 if [ -z "${RAW_RESPONSE// /}" ]; then
   echo "::error::opencode returned an empty response" >&2
+  [ -n "$ERR_OUTPUT" ] && { echo "::error::stderr from opencode:" >&2; printf '%s\n' "$ERR_OUTPUT" >&2; }
   exit 1
 fi
 
