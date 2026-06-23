@@ -10,11 +10,17 @@
 # Required env: GITHUB_TOKEN, PR_NUMBER, REPOSITORY, PR_AUTHOR, GITHUB_OUTPUT
 
 set -euo pipefail
-: "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 : "${PR_NUMBER:?PR_NUMBER is required}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${PR_AUTHOR:?PR_AUTHOR is required}"
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
+
+# Accept any of these token env vars. The action.yml passes the input as
+# GITHUB_TOKEN (and also as GH_TOKEN) but the caller may also export a
+# PERSONAL_ACCESS_TOKEN directly. Fall back in that order.
+TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-${PERSONAL_ACCESS_TOKEN:-}}}"
+: "${TOKEN:?A GitHub token is required: pass GITHUB_TOKEN, GH_TOKEN, or PERSONAL_ACCESS_TOKEN}"
+export GITHUB_TOKEN="$TOKEN"
 
 emit() { printf '%s\n' "$1" >> "$GITHUB_OUTPUT"; }
 

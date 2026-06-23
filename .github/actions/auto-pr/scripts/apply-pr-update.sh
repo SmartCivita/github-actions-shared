@@ -7,10 +7,14 @@
 # Optional env: NEW_TITLE, NEW_DESCRIPTION, BODY_IS_EMPTY
 
 set -euo pipefail
-: "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 : "${PR_NUMBER:?PR_NUMBER is required}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
+
+# Accept any of these token env vars. Fall back in order.
+TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-${PERSONAL_ACCESS_TOKEN:-}}}"
+: "${TOKEN:?A GitHub token is required: pass GITHUB_TOKEN, GH_TOKEN, or PERSONAL_ACCESS_TOKEN}"
+export GITHUB_TOKEN="$TOKEN"
 
 emit() { printf '%s\n' "$1" >> "$GITHUB_OUTPUT"; }
 
