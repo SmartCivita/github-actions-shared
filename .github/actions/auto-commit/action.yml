@@ -74,7 +74,8 @@ runs:
       run: bash "${{ github.action_path }}/scripts/apply-commit-fix.sh"
 
     - name: Send Discord notification
-      if: steps.apply.result == 'success' && inputs.notify == 'true'
+      if: ${{ steps.apply.result == 'success' && inputs.notify == 'true' }}
+      continue-on-error: true
       uses: SmartCivita/github-actions-shared/.github/actions/discord-notify@main
       with:
         title: Commit Message Fixed
@@ -83,3 +84,15 @@ runs:
         new-msg: ${{ steps.sanitize.outputs.new_msg }}
         webhook: ${{ inputs.discord-webhook }}
         run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Debug step results
+      if: ${{ always() }}
+      shell: bash
+      env:
+        APPLY_RESULT: ${{ steps.apply.result }}
+        APPLY_CONCLUSION: ${{ steps.apply.conclusion }}
+        NOTIFY_INPUT: ${{ inputs.notify }}
+      run: |
+        echo "apply.result=$APPLY_RESULT"
+        echo "apply.conclusion=$APPLY_CONCLUSION"
+        echo "inputs.notify=$NOTIFY_INPUT"
