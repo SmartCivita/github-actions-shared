@@ -118,7 +118,7 @@ runs:
         OPENCODE_API_KEY: ${{ inputs.opencode-api-key }}
       with:
         model: opencode-go/qwen3.7-max
-        use_github_token: "true"
+        use_github_token: true
         prompt: ${{ inputs.review-prompt }}
 
     - name: Send Discord notification

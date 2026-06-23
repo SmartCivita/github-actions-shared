@@ -39,18 +39,40 @@ AGENT_DEST_DIR="${GITHUB_WORKSPACE:-$PWD}/.opencode/agents"
 mkdir -p "$AGENT_DEST_DIR"
 cp "$AGENT_SRC" "$AGENT_DEST_DIR/pr-description.md"
 
-# Build prompt from template.
-PROMPT=$(sed \
-  -e "s|__PR_NUMBER__|$PR_NUMBER|g" \
-  -e "s|__BASE_BRANCH__|$BASE_BRANCH|g" \
-  -e "s|__HEAD_BRANCH__|$HEAD_BRANCH|g" \
-  -e "s|__AUTHOR__|$AUTHOR|g" \
-  -e "s|__CURRENT_TITLE__|$CURRENT_TITLE|g" \
-  -e "s|__CURRENT_BODY__|${CURRENT_BODY:-}|g" \
-  -e "s|__FILE_COUNT__|$FILE_COUNT|g" \
-  -e "s|__CHANGED_FILES__|$CHANGED_FILES|g" \
-  -e "s|__DIFF_CONTENT__|${DIFF_CONTENT:-}|g" \
-  "$PROMPT_TEMPLATE")
+# Build prompt from template using bash parameter expansion. This is safer
+# than sed because the diff content can contain backslashes, slashes, and
+# other characters that would break a sed replacement. We also use a
+# placeholder marker that cannot appear in the diff naturally.
+PROMPT_TEMPLATE_CONTENT=$(cat "$PROMPT_TEMPLATE")
+
+# Escape the values for bash printf %s substitution: backslashes and the
+# printf format chars % and \. We do this with a simple loop instead of
+# sed so the result is predictable.
+escape_for_printf() {
+  printf '%s' "$1" | sed 's@\\@\\\\@g; s@%@%%@g'
+}
+
+PR_NUMBER_S=$(escape_for_printf "$PR_NUMBER")
+BASE_BRANCH_S=$(escape_for_printf "$BASE_BRANCH")
+HEAD_BRANCH_S=$(escape_for_printf "$HEAD_BRANCH")
+AUTHOR_S=$(escape_for_printf "$AUTHOR")
+CURRENT_TITLE_S=$(escape_for_printf "$CURRENT_TITLE")
+CURRENT_BODY_S=$(escape_for_printf "${CURRENT_BODY:-}")
+FILE_COUNT_S=$(escape_for_printf "$FILE_COUNT")
+CHANGED_FILES_S=$(escape_for_printf "$CHANGED_FILES")
+DIFF_CONTENT_S=$(escape_for_printf "${DIFF_CONTENT:-}")
+
+PROMPT=$(printf '%s' "$PROMPT_TEMPLATE_CONTENT" \
+  | sed \
+    -e "s@__PR_NUMBER__@$PR_NUMBER_S@g" \
+    -e "s@__BASE_BRANCH__@$BASE_BRANCH_S@g" \
+    -e "s@__HEAD_BRANCH__@$HEAD_BRANCH_S@g" \
+    -e "s@__AUTHOR__@$AUTHOR_S@g" \
+    -e "s@__CURRENT_TITLE__@$CURRENT_TITLE_S@g" \
+    -e "s@__CURRENT_BODY__@$CURRENT_BODY_S@g" \
+    -e "s@__FILE_COUNT__@$FILE_COUNT_S@g" \
+    -e "s@__CHANGED_FILES__@$CHANGED_FILES_S@g" \
+    -e "s@__DIFF_CONTENT__@$DIFF_CONTENT_S@g")
 
 echo "::group::Calling opencode to generate PR title and description"
 
