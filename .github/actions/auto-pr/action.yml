@@ -113,6 +113,9 @@ runs:
     - name: Review code with opencode
       uses: anomalyco/opencode/github@latest
       if: ${{ always() && steps.info.outputs.pr_number != '' }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        OPENCODE_API_KEY: ${{ inputs.opencode-api-key }}
       with:
         model: opencode-go/qwen3.7-max
         use_github_token: "true"

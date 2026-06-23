@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Extract pull request metadata and diff.
+# Extract pull request metadata and diff using curl (no gh dependency).
 # Emits to GITHUB_OUTPUT:
 #   pr_number, pr_title, pr_body, pr_author, pr_url, base_branch, head_branch,
 #   head_sha, file_count, files, diff, body_is_empty
 #
-# Required env: GITHUB_OUTPUT, GITHUB_TOKEN (for gh CLI), PR_NUMBER (or derived
-# from github.event.pull_request.number passed via the caller workflow).
+# Required env: GITHUB_OUTPUT, PR_NUMBER
+# Optional env: GITHUB_TOKEN | GH_TOKEN | PERSONAL_ACCESS_TOKEN (one of them)
 
 set -euo pipefail
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
@@ -17,7 +17,6 @@ set -euo pipefail
 TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-${PERSONAL_ACCESS_TOKEN:-}}}"
 : "${TOKEN:?A GitHub token is required: pass GITHUB_TOKEN, GH_TOKEN, or PERSONAL_ACCESS_TOKEN}"
 export GITHUB_TOKEN="$TOKEN"
-export GH_TOKEN="$TOKEN"
 
 emit() { printf '%s\n' "$1" >> "$GITHUB_OUTPUT"; }
 emit_multiline() {
@@ -28,24 +27,33 @@ emit_multiline() {
   } >> "$GITHUB_OUTPUT"
 }
 
-# Verify gh is available.
-if ! command -v gh >/dev/null 2>&1; then
-  echo "::error::gh CLI not found in PATH. Install it or use a different action." >&2
+# Use curl directly to avoid the gh CLI dependency. Self-hosted runners
+# don't always have gh preinstalled, and we only need one endpoint.
+API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
+
+HTTP_CODE=$(curl -sS -o /tmp/pr-info-resp.json -w "%{http_code}" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  -H "User-Agent: auto-pr-action" \
+  "$API_URL")
+
+if [ "$HTTP_CODE" != "200" ]; then
+  echo "::error::Failed to fetch PR #${PR_NUMBER}. HTTP ${HTTP_CODE}" >&2
+  cat /tmp/pr-info-resp.json >&2 || true
   exit 1
 fi
 
-# Fetch full PR metadata via gh API. This includes title, body, base, head,
-# author, and the head SHA needed for the diff.
-PR_JSON=$(gh api "/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
-  --jq '{title, body, html_url, user: .user.login, head_sha: .head.sha, base_ref: .base.ref, head_ref: .head.ref}')
+PR_JSON=$(cat /tmp/pr-info-resp.json)
+rm -f /tmp/pr-info-resp.json
 
 PR_TITLE=$(printf '%s' "$PR_JSON" | jq -r '.title')
 PR_BODY=$(printf '%s' "$PR_JSON" | jq -r '.body // ""')
-PR_AUTHOR=$(printf '%s' "$PR_JSON" | jq -r '.user')
+PR_AUTHOR=$(printf '%s' "$PR_JSON" | jq -r '.user.login')
 PR_URL=$(printf '%s' "$PR_JSON" | jq -r '.html_url')
-HEAD_SHA=$(printf '%s' "$PR_JSON" | jq -r '.head_sha')
-BASE_BRANCH=$(printf '%s' "$PR_JSON" | jq -r '.base_ref')
-HEAD_BRANCH=$(printf '%s' "$PR_JSON" | jq -r '.head_ref')
+HEAD_SHA=$(printf '%s' "$PR_JSON" | jq -r '.head.sha')
+BASE_BRANCH=$(printf '%s' "$PR_JSON" | jq -r '.base.ref')
+HEAD_BRANCH=$(printf '%s' "$PR_JSON" | jq -r '.head.ref')
 
 # Detect whether the current body is empty / effectively empty. We use this
 # to decide whether to overwrite or leave the user's description alone.
@@ -55,15 +63,22 @@ else
   BODY_IS_EMPTY="false"
 fi
 
-# Compute the diff between the merge-base and the head commit. This is the
-# canonical PR diff that includes all commits in the branch.
-if git rev-parse --verify --quiet "${BASE_BRANCH}" >/dev/null 2>&1; then
-  # BASE_BRANCH exists locally (fetched by checkout).
+# Compute the diff between the merge-base and the head commit. The base
+# branch may or may not exist locally (depends on checkout strategy), so we
+# try several fallbacks.
+DIFF_BASE=""
+if [ -n "$BASE_BRANCH" ] && git rev-parse --verify --quiet "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
+  DIFF_BASE="origin/${BASE_BRANCH}"
+elif [ -n "$BASE_BRANCH" ] && git rev-parse --verify --quiet "${BASE_BRANCH}" >/dev/null 2>&1; then
   DIFF_BASE="${BASE_BRANCH}"
 else
-  # Fallback: try fetch from origin (may fail if no network, but worth trying).
-  git fetch origin "${BASE_BRANCH}" >/dev/null 2>&1 || DIFF_BASE="HEAD~1"
-  DIFF_BASE="${BASE_BRANCH}"
+  # Last resort: try to fetch the base branch.
+  if git fetch origin "${BASE_BRANCH}" >/dev/null 2>&1; then
+    DIFF_BASE="origin/${BASE_BRANCH}"
+  else
+    # Use the merge-base with HEAD as a final fallback.
+    DIFF_BASE=$(git merge-base HEAD origin/"${BASE_BRANCH}" 2>/dev/null || echo "HEAD~1")
+  fi
 fi
 
 # Build a compact diff: keep +/- lines (excluding file headers --- / +++),
