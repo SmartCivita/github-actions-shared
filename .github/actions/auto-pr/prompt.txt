@@ -1,0 +1,39 @@
+Generate a pull request title and a detailed description for the following change.
+
+PR CONTEXT:
+- PR number: __PR_NUMBER__
+- Base branch: __BASE_BRANCH__
+- Head branch: __HEAD_BRANCH__
+- Author: __AUTHOR__
+- Current title: __CURRENT_TITLE__
+- Current description (may be empty): __CURRENT_BODY__
+
+CHANGED FILES (__FILE_COUNT__):
+__CHANGED_FILES__
+
+CODE DIFF (added and removed lines, up to 2000 chars):
+__DIFF_CONTENT__
+
+REQUIRED OUTPUT FORMAT (strictly):
+
+TITLE: <conventional-commit-type>(<scope>): <subject>
+
+- <bullet 1>
+- <bullet 2>
+- <bullet 3>
+- <bullet 4> (optional)
+- <bullet 5> (optional)
+
+RULES:
+- TITLE: starts with feat, fix, docs, style, refactor, test, chore, perf, ci, build, or revert
+- TITLE: max 72 chars total
+- Description: 3-5 bullets, each starts with "- "
+- Wrap each bullet at 72 chars per line
+- Each bullet explains one concrete change: what was modified and why
+- Be specific: name functions, files, or behaviors
+- Focus on intent, not mechanics
+
+OUTPUT RULES:
+- Output ONLY the formatted block above
+- No backticks, no markdown code fences, no explanations
+- No "here is the description" or similar preamble

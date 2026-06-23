@@ -1,0 +1,109 @@
+name: Auto PR
+description: Auto-generate PR title/description, review code on every push, and notify Discord.
+
+inputs:
+  opencode-api-key:
+    description: API key for opencode-go provider
+    required: true
+  discord-webhook:
+    description: Discord webhook URL for notifications
+    required: true
+  github-token:
+    description: GitHub token used by gh CLI and the opencode github action. Use secrets.GITHUB_TOKEN or a PAT.
+    required: true
+  notify:
+    description: Send a Discord notification after each successful run
+    required: false
+    default: "true"
+  review-prompt:
+    description: Custom prompt for the code review step
+    required: false
+    default: |
+      Review this pull request and add a single review comment on the PR.
+      Look for:
+      - Security vulnerabilities or unsafe patterns
+      - Code quality issues (naming, structure, duplication)
+      - Performance concerns (algorithmic complexity, missing indexes, N+1 queries)
+      - Suggestions for tests that would meaningfully improve coverage
+      - Breaking changes or migration concerns
+
+      Format your response so it is directly suitable for a PR review comment:
+      - Be concise and actionable
+      - Use markdown (the opencode github action will format it)
+      - Group findings by severity (Critical, Suggestions, Optional)
+      - If there is nothing important to flag, respond with a brief approval
+        message (one or two sentences) noting what looks good
+      - Do NOT make code changes. Do NOT push commits. Only add a single
+        review comment to the PR.
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Get PR info
+      id: info
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: bash "${{ github.action_path }}/scripts/get-pr-info.sh"
+
+    - name: Generate title and description
+      id: generate
+      if: steps.info.outputs.body_is_empty == 'true' && (github.event.action == 'opened' || github.event.action == 'reopened')
+      shell: bash
+      env:
+        OPENCODE_API_KEY: ${{ inputs.opencode-api-key }}
+        PR_NUMBER: ${{ steps.info.outputs.pr_number }}
+        BASE_BRANCH: ${{ steps.info.outputs.base_branch }}
+        HEAD_BRANCH: ${{ steps.info.outputs.head_branch }}
+        AUTHOR: ${{ steps.info.outputs.pr_author }}
+        CURRENT_TITLE: ${{ steps.info.outputs.pr_title }}
+        CURRENT_BODY: ${{ steps.info.outputs.pr_body }}
+        CHANGED_FILES: ${{ steps.info.outputs.files }}
+        FILE_COUNT: ${{ steps.info.outputs.file_count }}
+        DIFF_CONTENT: ${{ steps.info.outputs.diff }}
+      run: bash "${{ github.action_path }}/scripts/generate-pr-description.sh" "${{ github.action_path }}/prompt.txt"
+
+    - name: Sanitize title and description
+      id: sanitize
+      if: steps.generate.outputs.raw_response != ''
+      shell: bash
+      env:
+        raw_response: ${{ steps.generate.outputs.raw_response }}
+      run: bash "${{ github.action_path }}/scripts/sanitize-pr-description.sh"
+
+    - name: Update PR title and body
+      if: steps.sanitize.outputs.status == 'success' && steps.sanitize.outputs.pr_title != ''
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ steps.info.outputs.pr_number }}
+        NEW_TITLE: ${{ steps.sanitize.outputs.pr_title }}
+        NEW_DESCRIPTION: ${{ steps.sanitize.outputs.pr_description }}
+        BODY_IS_EMPTY: ${{ steps.info.outputs.body_is_empty }}
+      run: bash "${{ github.action_path }}/scripts/apply-pr-update.sh"
+
+    - name: Review code with opencode
+      uses: anomalyco/opencode/github@latest
+      if: ${{ always() && steps.info.outputs.pr_number != '' }}
+      with:
+        model: opencode-go/qwen3.7-max
+        use_github_token: "true"
+        prompt: ${{ inputs.review-prompt }}
+
+    - name: Send Discord notification
+      if: ${{ steps.info.conclusion == 'success' && inputs.notify == 'true' }}
+      continue-on-error: true
+      uses: SmartCivita/github-actions-shared/.github/actions/discord-notify@main
+      with:
+        title: Pull Request Reviewed
+        event-type: pr
+        pr-number: ${{ steps.info.outputs.pr_number }}
+        webhook: ${{ inputs.discord-webhook }}
+        run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

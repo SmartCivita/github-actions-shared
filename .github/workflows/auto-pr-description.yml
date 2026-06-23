@@ -2,13 +2,9 @@ name: Auto PR Description
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened]
   workflow_call:
     inputs:
-      target-branch:
-        type: string
-        default: main
-        description: Target branch for PR
       runner-label:
         type: string
         default: self-hosted
@@ -18,69 +14,23 @@ on:
         required: true
       DISCORD_WEBHOOK:
         required: true
+      PERSONAL_ACCESS_TOKEN:
+        required: true
 
-permissions:
-  contents: read
-  pull-requests: write
-  id-token: write
+# NOTE: do not declare `concurrency` here. This workflow is invoked via
+# workflow_call from a top-level caller. Concurrency must be declared only on
+# the top-level workflow, otherwise GitHub aborts with a deadlock error.
 
 jobs:
   update-pr:
     runs-on: ${{ inputs.runner-label }}
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: SmartCivita/github-actions-shared/.github/actions/auto-pr@main
         with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-
-      - name: Update PR with OpenCode
-        uses: anomalyco/opencode/github@latest
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          model: opencode/qwen3.7-max
-          prompt: |
-            Review this pull request and perform the following actions:
-
-            1. **Update PR Title and Description**: If the current title or description is not sufficiently descriptive, professional, and informative, improve them. The description should include:
-               - Summary of changes
-               - What was changed and why
-               - Files modified
-               - Any breaking changes or migration notes
-
-            2. **Add Labels**: Based on the code changes, add appropriate labels to categorize this PR. Consider:
-               - Type: feature, bugfix, hotfix, refactor, documentation, ci, testing, dependencies, etc.
-               - Scope: frontend, backend, api, db, etc.
-               - Use file patterns and change types to determine labels
-
-            3. **Assign Reviewers**: Assign JosephRiosHenao as a reviewer for this PR.
-
-            4. **Set Assignee**: Set the PR author as the assignee (owner) of this PR.
-
-            5. **Add Review Comment**: Comment on the PR with:
-               - Potential improvements or optimization suggestions
-               - Any important security considerations or potential vulnerabilities found
-               - Code quality observations
-               - Suggestions for testing
-
-            Be thorough and professional in your review. Make sure all actions are beneficial for the codebase quality.
-
-      - name: Get PR info for Discord
-        id: pr-info
-        run: |
-          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-          echo "PR_TITLE=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
-          echo "PR_URL=${{ github.event.pull_request.html_url }}" >> $GITHUB_OUTPUT
-          echo "AUTHOR=${{ github.event.pull_request.user.login }}" >> $GITHUB_OUTPUT
-
-      - name: Discord notification
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          REPO_NAME: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          PAYLOAD="{\"username\":\"AutoPR Bot\",\"embeds\":[{\"title\":\"PR Reviewed\",\"url\":\"${{ github.event.pull_request.html_url }}\",\"color\":5763719,\"fields\":[{\"name\":\"PR\",\"value\":\"#${{ github.event.pull_request.number }}\"},{\"name\":\"Author\",\"value\":\"${{ github.event.pull_request.user.login }}\"}],\"timestamp\":\"$TIMESTAMP\"}]}"
-          curl -sf -X POST "$DISCORD_WEBHOOK" -H "Content-Type: application/json" -d "$PAYLOAD"
+          opencode-api-key: ${{ secrets.OPENCODE_API_KEY }}
+          discord-webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
