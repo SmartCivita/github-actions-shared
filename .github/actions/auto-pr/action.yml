@@ -15,6 +15,14 @@ inputs:
     description: Send a Discord notification after each successful run
     required: false
     default: "true"
+  reviewers:
+    description: Comma-separated list of GitHub usernames to request as reviewers. Pass "false" to skip.
+    required: false
+    default: "JosephRiosHenao"
+  assignee:
+    description: GitHub username to assign. Pass "false" to skip. Defaults to the PR author.
+    required: false
+    default: ""
   review-prompt:
     description: Custom prompt for the code review step
     required: false
@@ -88,6 +96,18 @@ runs:
         NEW_DESCRIPTION: ${{ steps.sanitize.outputs.pr_description }}
         BODY_IS_EMPTY: ${{ steps.info.outputs.body_is_empty }}
       run: bash "${{ github.action_path }}/scripts/apply-pr-update.sh"
+
+    - name: Apply PR metadata (reviewers, assignee, labels)
+      if: github.event.action == 'opened' || github.event.action == 'reopened'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ steps.info.outputs.pr_number }}
+        PR_AUTHOR: ${{ steps.info.outputs.pr_author }}
+        REVIEWERS: ${{ inputs.reviewers }}
+        ASSIGNEE: ${{ inputs.assignee }}
+        NEW_LABELS: ${{ steps.sanitize.outputs.pr_labels }}
+      run: bash "${{ github.action_path }}/scripts/apply-pr-metadata.sh"
 
     - name: Review code with opencode
       uses: anomalyco/opencode/github@latest

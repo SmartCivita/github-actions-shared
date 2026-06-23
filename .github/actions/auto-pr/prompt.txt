@@ -1,4 +1,4 @@
-Generate a pull request title and a detailed description for the following change.
+Generate a pull request title, a detailed description, and a list of labels for the following change.
 
 PR CONTEXT:
 - PR number: __PR_NUMBER__
@@ -24,6 +24,8 @@ TITLE: <conventional-commit-type>(<scope>): <subject>
 - <bullet 4> (optional)
 - <bullet 5> (optional)
 
+LABELS: <label1>, <label2>, <label3>
+
 RULES:
 - TITLE: starts with feat, fix, docs, style, refactor, test, chore, perf, ci, build, or revert
 - TITLE: max 72 chars total
@@ -33,7 +35,21 @@ RULES:
 - Be specific: name functions, files, or behaviors
 - Focus on intent, not mechanics
 
+LABELS RULES:
+- Output 1-4 labels total, comma-separated, lowercase, no spaces
+- Each label must be one of the conventional types below (prefer the first
+  one that fits; add a scope label as a second if useful):
+  - type: feat, fix, docs, style, refactor, test, chore, perf, ci, build
+  - scope (only if the change is clearly scoped to one area):
+    frontend, backend, api, db, infra, auth, ui, ci
+- Examples: "feat", "fix,backend,api", "docs", "refactor,frontend",
+  "chore,ci", "test,backend"
+- If the change is purely a test, label "test"
+- If unsure, use "chore"
+
 OUTPUT RULES:
-- Output ONLY the formatted block above
+- Output ONLY the three blocks above in order: TITLE, description, LABELS
 - No backticks, no markdown code fences, no explanations
 - No "here is the description" or similar preamble
+- A blank line between TITLE block and description bullets is required
+- A blank line between description bullets and LABELS line is required

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sanitize the raw opencode response into a PR title and description.
+# Sanitize the raw opencode response into a PR title, description, and labels.
 # Expected format from the model:
 #
 #   TITLE: feat(login): add login button
@@ -7,8 +7,10 @@
 #   - Add LoginButton component
 #   - Wire form to auth service
 #
-# Emits status=success, pr_title (single line), pr_description (multiline) to
-# GITHUB_OUTPUT. The description preserves bullet points and wraps at 72 chars.
+#   LABELS: feat,frontend
+#
+# Emits status=success, pr_title, pr_description, pr_labels (comma-separated)
+# to GITHUB_OUTPUT. The description preserves bullets and wraps at 72 chars.
 # Requires env: raw_response, GITHUB_OUTPUT
 
 set -euo pipefail
@@ -27,25 +29,20 @@ emit_multiline() {
 # Strip markdown noise globally.
 CLEAN=$(printf '%s\n' "$raw_response" | tr -d '`' | sed 's/^[*#>\ ]*//')
 
-# Extract the line that starts with "TITLE:". If absent, fall back to the
-# first non-empty line.
-TITLE=$(printf '%s\n' "$CLEAN" | awk '
-  /^[Tt][Ii][Tt][Ll][Ee]:[[:space:]]*/ {
-    sub(/^[Tt][Ii][Tt][Ll][Ee]:[[:space:]]*/, "")
-    print
-    exit
-  }
-' | head -1)
+# Find the LINE numbers where TITLE: and LABELS: appear, so we can split the
+# response into three sections.
+TITLE_LINE=$(printf '%s\n' "$CLEAN" | awk 'BEGIN{n=0} {n++; if (/^[Tt][Ii][Tt][Ll][Ee]:[[:space:]]*/) {print n; exit}}')
+LABELS_LINE=$(printf '%s\n' "$CLEAN" | awk 'BEGIN{n=0} {n++; if (/^[Ll][Aa][Bb][Ee][Ll][Ss]:[[:space:]]*/) {print n; exit}}')
 
-if [ -z "$TITLE" ]; then
+# --- Title ---
+if [ -n "$TITLE_LINE" ]; then
+  TITLE=$(printf '%s\n' "$CLEAN" | awk -v start="$TITLE_LINE" 'NR==start {sub(/^[Tt][Ii][Tt][Ll][Ee]:[[:space:]]*/, ""); print; exit}')
+else
   TITLE=$(printf '%s\n' "$CLEAN" | awk 'NF {print; exit}')
 fi
 
-# Strip any "TITLE:" prefix that the model may have left in the first line.
-TITLE=$(printf '%s' "$TITLE" | sed 's/^[Tt][Ii][Tt][Ll][Ee]:[[:space:]]*//')
-
-# Trim and cap to 72 chars.
-TITLE=$(printf '%s' "$TITLE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | cut -c1-72)
+# Strip any "TITLE:" prefix that survived.
+TITLE=$(printf '%s' "$TITLE" | sed 's/^[Tt][Ii][Tt][Ll][Ee]:[[:space:]]*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | cut -c1-72)
 
 if [ -z "$TITLE" ]; then
   echo "::error::Sanitized title is empty. Raw response was:" >&2
@@ -53,33 +50,50 @@ if [ -z "$TITLE" ]; then
   exit 1
 fi
 
-# Validate the title follows conventional-commits format. We allow either a
-# conventional subject (feat:, fix:, ...) or a plain descriptive title.
+# Warn (don't fail) if title doesn't match conventional-commits format.
 CONVENTIONAL_RE='^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)[:\(]'
 if [[ ! $TITLE =~ $CONVENTIONAL_RE ]]; then
   echo "::warning::Title does not match conventional-commits format: $TITLE" >&2
-  # Not a hard error: we still accept the title and proceed.
 fi
 
-# Extract description: everything after the TITLE line. If the model emitted
-# a blank line, then bullets, capture only the bullets.
-DESCRIPTION=$(printf '%s\n' "$CLEAN" | awk '
-  BEGIN { past_title = 0; saw_blank = 0 }
-  NR == 1 && /^[Tt][Ii][Tt][Ll][Ee]:/ { past_title = 1; next }
-  NR == 1 && !/^[Tt][Ii][Tt][Ll][Ee]:/ { past_title = 1 }  # fall back: no TITLE: line
-  past_title {
-    if (!NF) { saw_blank = 1; next }
-    if (saw_blank) { print }
-  }
-')
+# --- Description ---
+# Description is everything between the TITLE line and the LABELS line.
+if [ -n "$TITLE_LINE" ] && [ -n "$LABELS_LINE" ]; then
+  DESCRIPTION=$(printf '%s\n' "$CLEAN" | awk -v t="$TITLE_LINE" -v l="$LABELS_LINE" 'NR>t && NR<l')
+elif [ -n "$TITLE_LINE" ]; then
+  DESCRIPTION=$(printf '%s\n' "$CLEAN" | awk -v t="$TITLE_LINE" 'NR>t')
+else
+  DESCRIPTION=""
+fi
 
-# Normalize bullets: ensure each starts with "- " (the model may have dropped
-# the dash in some cases). Then wrap each line at 72 chars.
+# Normalize bullets: ensure each starts with "- ". Then wrap each line at 72 chars.
 DESCRIPTION=$(printf '%s\n' "$DESCRIPTION" \
   | sed 's/^[[:space:]]*[*\-][[:space:]]*/- /' \
   | sed 's/^[[:space:]]*//' \
-  | fold -s -w 72)
+  | fold -s -w 72 \
+  | sed '/^$/d')
+
+# --- Labels ---
+if [ -n "$LABELS_LINE" ]; then
+  LABELS=$(printf '%s\n' "$CLEAN" | awk -v start="$LABELS_LINE" 'NR==start {sub(/^[Ll][Aa][Bb][Ee][Ll][Ss]:[[:space:]]*/, ""); print; exit}')
+else
+  LABELS=""
+fi
+
+# Sanitize labels: lowercase, comma-separated, no spaces, only allow alphanum
+# and dash. Anything else is dropped. Cap at 4 labels.
+if [ -n "$LABELS" ]; then
+  LABELS=$(printf '%s' "$LABELS" | tr '[:upper:]' '[:lower:]' | tr -d ' ' | tr ',' '\n' | grep -E '^[a-z0-9-]+$' | head -4 | paste -sd ',' -)
+fi
+
+# Whitelist filter: only allow labels from this set. This prevents the model
+# from inventing arbitrary labels that don't exist in the repo.
+ALLOWED='^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|frontend|backend|api|db|infra|auth|ui)$'
+if [ -n "$LABELS" ]; then
+  LABELS=$(printf '%s' "$LABELS" | tr ',' '\n' | grep -E "$ALLOWED" | paste -sd ',' -)
+fi
 
 emit "status=success"
 emit "pr_title=$TITLE"
 emit_multiline pr_description <<< "$DESCRIPTION"
+emit "pr_labels=$LABELS"
