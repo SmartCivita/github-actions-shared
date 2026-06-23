@@ -74,7 +74,7 @@ runs:
       run: bash "${{ github.action_path }}/scripts/apply-commit-fix.sh"
 
     - name: Send Discord notification
-      if: steps.apply.outputs.result == 'success' && inputs.notify == 'true'
+      if: steps.apply.result == 'success' && inputs.notify == 'true'
       uses: SmartCivita/github-actions-shared/.github/actions/discord-notify@main
       with:
         title: Commit Message Fixed
