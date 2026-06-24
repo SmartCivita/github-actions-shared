@@ -26,7 +26,6 @@ set -euo pipefail
 PROMPT_TEMPLATE="${1:?usage: generate-pr-description.sh <prompt-template-file>}"
 [[ -f "$PROMPT_TEMPLATE" ]] || { echo "::error::Prompt template not found: $PROMPT_TEMPLATE" >&2; exit 1; }
 
-# Verify opencode is installed.
 if ! command -v opencode >/dev/null 2>&1; then
   echo "::error::opencode CLI not found in PATH. Install it from https://opencode.ai" >&2
   exit 1
@@ -39,40 +38,20 @@ AGENT_DEST_DIR="${GITHUB_WORKSPACE:-$PWD}/.opencode/agents"
 mkdir -p "$AGENT_DEST_DIR"
 cp "$AGENT_SRC" "$AGENT_DEST_DIR/pr-description.md"
 
-# Build prompt from template using bash parameter expansion. This is safer
-# than sed because the diff content can contain backslashes, slashes, and
-# other characters that would break a sed replacement. We also use a
-# placeholder marker that cannot appear in the diff naturally.
-PROMPT_TEMPLATE_CONTENT=$(cat "$PROMPT_TEMPLATE")
-
-# Escape the values for bash printf %s substitution: backslashes and the
-# printf format chars % and \. We do this with a simple loop instead of
-# sed so the result is predictable.
-escape_for_printf() {
-  printf '%s' "$1" | sed 's@\\@\\\\@g; s@%@%%@g'
-}
-
-PR_NUMBER_S=$(escape_for_printf "$PR_NUMBER")
-BASE_BRANCH_S=$(escape_for_printf "$BASE_BRANCH")
-HEAD_BRANCH_S=$(escape_for_printf "$HEAD_BRANCH")
-AUTHOR_S=$(escape_for_printf "$AUTHOR")
-CURRENT_TITLE_S=$(escape_for_printf "$CURRENT_TITLE")
-CURRENT_BODY_S=$(escape_for_printf "${CURRENT_BODY:-}")
-FILE_COUNT_S=$(escape_for_printf "$FILE_COUNT")
-CHANGED_FILES_S=$(escape_for_printf "$CHANGED_FILES")
-DIFF_CONTENT_S=$(escape_for_printf "${DIFF_CONTENT:-}")
-
-PROMPT=$(printf '%s' "$PROMPT_TEMPLATE_CONTENT" \
-  | sed \
-    -e "s@__PR_NUMBER__@$PR_NUMBER_S@g" \
-    -e "s@__BASE_BRANCH__@$BASE_BRANCH_S@g" \
-    -e "s@__HEAD_BRANCH__@$HEAD_BRANCH_S@g" \
-    -e "s@__AUTHOR__@$AUTHOR_S@g" \
-    -e "s@__CURRENT_TITLE__@$CURRENT_TITLE_S@g" \
-    -e "s@__CURRENT_BODY__@$CURRENT_BODY_S@g" \
-    -e "s@__FILE_COUNT__@$FILE_COUNT_S@g" \
-    -e "s@__CHANGED_FILES__@$CHANGED_FILES_S@g" \
-    -e "s@__DIFF_CONTENT__@$DIFF_CONTENT_S@g")
+# Render the prompt template using bash parameter expansion. This is the
+# only safe way to interpolate user-controlled content (like a code diff
+# with pipes, slashes, backslashes, percent signs, etc.).
+RENDER_SCRIPT="${GITHUB_ACTION_PATH:-.}/scripts/render-template.sh"
+PROMPT=$(bash "$RENDER_SCRIPT" "$PROMPT_TEMPLATE" \
+  "PR_NUMBER=$PR_NUMBER" \
+  "BASE_BRANCH=$BASE_BRANCH" \
+  "HEAD_BRANCH=$HEAD_BRANCH" \
+  "AUTHOR=$AUTHOR" \
+  "CURRENT_TITLE=$CURRENT_TITLE" \
+  "CURRENT_BODY=${CURRENT_BODY:-}" \
+  "FILE_COUNT=$FILE_COUNT" \
+  "CHANGED_FILES=$CHANGED_FILES" \
+  "DIFF_CONTENT=${DIFF_CONTENT:-}")
 
 echo "::group::Calling opencode to generate PR title and description"
 
@@ -93,7 +72,6 @@ ERR_OUTPUT=$(cat "$ERR_FILE")
 
 echo "::endgroup::"
 
-# Distinguish failure modes for actionable logs.
 case "$RC" in
   0) ;;
   124)

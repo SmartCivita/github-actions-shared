@@ -1,18 +1,18 @@
 Generate a pull request title, a detailed description, and a list of labels for the following change.
 
 PR CONTEXT:
-- PR number: __PR_NUMBER__
-- Base branch: __BASE_BRANCH__
-- Head branch: __HEAD_BRANCH__
-- Author: __AUTHOR__
-- Current title: __CURRENT_TITLE__
-- Current description (may be empty): __CURRENT_BODY__
+- PR number: {PR_NUMBER}
+- Base branch: {BASE_BRANCH}
+- Head branch: {HEAD_BRANCH}
+- Author: {AUTHOR}
+- Current title: {CURRENT_TITLE}
+- Current description (may be empty): {CURRENT_BODY}
 
-CHANGED FILES (__FILE_COUNT__):
-__CHANGED_FILES__
+CHANGED FILES ({FILE_COUNT}):
+{CHANGED_FILES}
 
 CODE DIFF (added and removed lines, up to 2000 chars):
-__DIFF_CONTENT__
+{DIFF_CONTENT}
 
 REQUIRED OUTPUT FORMAT (strictly):
 

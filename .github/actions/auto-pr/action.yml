@@ -9,7 +9,7 @@ inputs:
     description: Discord webhook URL for notifications
     required: true
   github-token:
-    description: GitHub token used by gh CLI and the opencode github action. Use secrets.GITHUB_TOKEN or a PAT.
+    description: GitHub token used to call the REST API (PR update, reviewers, labels, review comment). Use secrets.GITHUB_TOKEN or a PAT.
     required: true
   notify:
     description: Send a Discord notification after each successful run
@@ -23,26 +23,6 @@ inputs:
     description: GitHub username to assign. Pass "false" to skip. Defaults to the PR author.
     required: false
     default: ""
-  review-prompt:
-    description: Custom prompt for the code review step
-    required: false
-    default: |
-      Review this pull request and add a single review comment on the PR.
-      Look for:
-      - Security vulnerabilities or unsafe patterns
-      - Code quality issues (naming, structure, duplication)
-      - Performance concerns (algorithmic complexity, missing indexes, N+1 queries)
-      - Suggestions for tests that would meaningfully improve coverage
-      - Breaking changes or migration concerns
-
-      Format your response so it is directly suitable for a PR review comment:
-      - Be concise and actionable
-      - Use markdown (the opencode github action will format it)
-      - Group findings by severity (Critical, Suggestions, Optional)
-      - If there is nothing important to flag, respond with a brief approval
-        message (one or two sentences) noting what looks good
-      - Do NOT make code changes. Do NOT push commits. Only add a single
-        review comment to the PR.
 
 runs:
   using: composite
@@ -58,7 +38,6 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
-        GH_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: bash "${{ github.action_path }}/scripts/get-pr-info.sh"
 
@@ -110,16 +89,18 @@ runs:
         NEW_LABELS: ${{ steps.sanitize.outputs.pr_labels }}
       run: bash "${{ github.action_path }}/scripts/apply-pr-metadata.sh"
 
-    - name: Review code with opencode
-      uses: anomalyco/opencode/github@latest
+    - name: Generate and post code review
+      id: review
       if: ${{ always() && steps.info.outputs.pr_number != '' }}
+      shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         OPENCODE_API_KEY: ${{ inputs.opencode-api-key }}
-      with:
-        model: opencode-go/qwen3.7-max
-        use_github_token: true
-        prompt: ${{ inputs.review-prompt }}
+        PR_NUMBER: ${{ steps.info.outputs.pr_number }}
+        CHANGED_FILES: ${{ steps.info.outputs.files }}
+        FILE_COUNT: ${{ steps.info.outputs.file_count }}
+        DIFF_CONTENT: ${{ steps.info.outputs.diff }}
+      run: bash "${{ github.action_path }}/scripts/post-review.sh"
 
     - name: Send Discord notification
       if: ${{ steps.info.conclusion == 'success' && inputs.notify == 'true' }}
