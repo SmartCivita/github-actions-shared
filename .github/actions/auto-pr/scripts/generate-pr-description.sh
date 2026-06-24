@@ -57,7 +57,7 @@ echo "::group::Calling opencode to generate PR title and description"
 
 RAW_FILE=$(mktemp)
 ERR_FILE=$(mktemp)
-trap 'rm -f "$RAW_FILE" "$ERR_FILE" "$AGENT_DEST_DIR/pr-description.md" "$AGENT_DEST_DIR"' EXIT
+trap 'rm -rf "$RAW_FILE" "$ERR_FILE" "$AGENT_DEST_DIR"' EXIT
 
 set +e
 OPENCODE_DISABLE_AUTOUPDATE=true \

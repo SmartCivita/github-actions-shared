@@ -82,22 +82,26 @@ else
 fi
 
 # Build a compact diff: keep +/- lines (excluding file headers --- / +++),
-# cap at ~2000 chars total.
-diff_content=$(git diff --no-color "${DIFF_BASE}...HEAD" 2>/dev/null \
+# cap at ~2000 chars total. We wrap the pipe in a subshell with `set +e` to
+# tolerate SIGPIPE errors when downstream commands like `head` close the
+# pipe early (this is normal, not a real failure, but with `set -o pipefail`
+# it would otherwise abort the script).
+diff_content=$(set +e; git diff --no-color "${DIFF_BASE}...HEAD" 2>/dev/null \
   | grep -E '^[+-][^+-]' \
   | head -100 \
   | cut -c1-200 \
   | tr -d '\000' \
-  | head -c 2000 || true)
+  | head -c 2000)
 
 # Fallback if diff is empty (single-commit PR with no diff against base).
 if [ -z "${diff_content// /}" ]; then
   diff_content="(no textual diff available; PR may be empty or the base branch matches head)"
 fi
 
-# Changed files list.
-changed_files=$(git diff --name-only "${DIFF_BASE}...HEAD" 2>/dev/null || true)
-file_count=$(printf '%s\n' "$changed_files" | grep -c . || true)
+# Changed files list. Wrap in a subshell with `set +e` to tolerate SIGPIPE
+# from `grep` when the input is empty.
+changed_files=$(set +e; git diff --name-only "${DIFF_BASE}...HEAD" 2>/dev/null)
+file_count=$(set +e; printf '%s\n' "$changed_files" | grep -c .)
 
 emit_multiline pr_title <<< "$PR_TITLE"
 emit_multiline pr_body <<< "$PR_BODY"
