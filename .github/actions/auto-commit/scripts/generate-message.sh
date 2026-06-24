@@ -22,13 +22,15 @@ if ! command -v opencode >/dev/null 2>&1; then
   exit 1
 fi
 
-# Build prompt from template.
-PROMPT=$(sed \
-  -e "s|__CURRENT_MSG__|$CURRENT_MSG|g" \
-  -e "s|__FILE_COUNT__|$FILE_COUNT|g" \
-  -e "s|__CHANGED_FILES__|$CHANGED_FILES|g" \
-  -e "s|__DIFF_CONTENT__|${DIFF_CONTENT:-}|g" \
-  "$PROMPT_TEMPLATE")
+# Build prompt from template using bash parameter expansion. The diff and
+# file names can contain pipes, slashes, backslashes, and other characters
+# that would break a sed replacement, so we use render-template.sh which
+# is robust to any character in the value.
+PROMPT=$(bash "${GITHUB_ACTION_PATH:-.}/scripts/render-template.sh" "$PROMPT_TEMPLATE" \
+  "CURRENT_MSG=$CURRENT_MSG" \
+  "FILE_COUNT=$FILE_COUNT" \
+  "CHANGED_FILES=$CHANGED_FILES" \
+  "DIFF_CONTENT=${DIFF_CONTENT:-}")
 
 # Install a tool-less custom agent in the working directory. opencode looks for
 # agents in <cwd>/.opencode/agents/*.md and the user-supplied <prompt> as
