@@ -81,18 +81,18 @@ else
 fi
 
 # Sanitize labels: lowercase, comma-separated, no spaces, only allow alphanum
-# and dash. Anything else is dropped. Cap at 4 labels. Wrap in a subshell
-# with `set +e` so SIGPIPE from `head` or `paste` on empty input doesn't
-# abort the script under `set -o pipefail`.
+# and dash. Anything else is dropped. Cap at 4 labels. The `|| true` at the
+# end handles SIGPIPE from `head` or `paste` truncation, matching the
+# pattern used in auto-commit.
 if [ -n "$LABELS" ]; then
-  LABELS=$(set +e; printf '%s' "$LABELS" | tr '[:upper:]' '[:lower:]' | tr -d ' ' | tr ',' '\n' | grep -E '^[a-z0-9-]+$' | head -4 | paste -sd ',' -)
+  LABELS=$(printf '%s' "$LABELS" | tr '[:upper:]' '[:lower:]' | tr -d ' ' | tr ',' '\n' | grep -E '^[a-z0-9-]+$' | head -4 | paste -sd ',' - || true)
 fi
 
 # Whitelist filter: only allow labels from this set. This prevents the model
 # from inventing arbitrary labels that don't exist in the repo.
 ALLOWED='^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|frontend|backend|api|db|infra|auth|ui)$'
 if [ -n "$LABELS" ]; then
-  LABELS=$(set +e; printf '%s' "$LABELS" | tr ',' '\n' | grep -E "$ALLOWED" | paste -sd ',' -)
+  LABELS=$(printf '%s' "$LABELS" | tr ',' '\n' | grep -E "$ALLOWED" | paste -sd ',' - || true)
 fi
 
 emit "status=success"
